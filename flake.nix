@@ -11,14 +11,7 @@
         pkgs:
         let
           lib = pkgs.lib;
-          nixosKernelOpts =
-            (lib.evalModules {
-              modules = [
-                "${nixpkgs}/nixos/modules/config/sysctl.nix"
-                { _module.check = false; }
-              ];
-            }).options.boot.kernel;
-          nixosNetworkingOpts =
+          nixosOpts =
             let
               utils = import "${nixpkgs}/nixos/lib/utils.nix" {
                 inherit lib pkgs;
@@ -27,11 +20,12 @@
             in
             (lib.evalModules {
               modules = [
+                "${nixpkgs}/nixos/modules/config/sysctl.nix"
                 "${nixpkgs}/nixos/modules/tasks/network-interfaces.nix"
                 { _module.check = false; }
               ];
               specialArgs = { inherit utils pkgs; };
-            }).options.networking;
+            }).options;
 
           # Build a submodule options attrset from a spec tree mixed with NixOS options.
           # nixosRoot: dot-path prefix for the context (e.g. "networking"), used in description suffix.
@@ -42,7 +36,7 @@
           #   { "<name>" = subSpec; } — attrsOf keyed-by-name submodule; subSpec is the per-item spec
           #   other attrset   — recurse into NixOS submodule/namespace with this sub-spec
           inheritFromNixpkgs =
-            nixosRoot: ctx: spec:
+            nixosRoot: spec:
             let
               isOpt = x: x ? _type && x._type == "option";
 
@@ -101,6 +95,7 @@
                     }
                   else
                     lib.mkOption {
+                      description = nixosSuffix;
                       default = { };
                       type = lib.types.submodule {
                         options = build (pathSegs ++ [ key ]) child val;
@@ -108,9 +103,27 @@
                     }
                 ) specNode;
             in
-            build [ nixosRoot ] ctx spec;
+            build [ nixosRoot ] (lib.foldl (c: s: c.${s}) nixosOpts (lib.splitString "." nixosRoot)) spec;
 
-          nixosSysctlOption = (inheritFromNixpkgs "boot.kernel" nixosKernelOpts { sysctl = null; }).sysctl;
+          # Inherit a single NixOS option by full dot-path.
+          # Inherit a single NixOS option by absolute dot-path.
+          # "<name>" segments descend into attrsOf element submodule options.
+          nixosOpt =
+            path: additionalDescription:
+            let
+              opt = lib.foldl (
+                ctx: seg: if seg == "<name>" then ctx.type.nestedTypes.elemType.getSubOptions [ ] else ctx.${seg}
+              ) nixosOpts (lib.splitString "." path);
+            in
+            opt
+            // {
+              description =
+                opt.description
+                + " Same type as NixOS ${path}."
+                + lib.optionalString (additionalDescription != "") " ${additionalDescription}";
+            };
+
+          nixosSysctlOption = (inheritFromNixpkgs "boot.kernel" { sysctl = null; }).sysctl;
 
           netem = lib.types.submodule {
             options = {
@@ -175,6 +188,7 @@
         {
           namespaces = lib.mkOption {
             default = { };
+            description = "Network namespaces to create.";
             type = lib.types.attrsOf (
               lib.types.submodule {
                 options = {
@@ -207,10 +221,30 @@
                             default = [ ];
                             description = "Packages prepended to PATH for this script only.";
                           };
-                          sandbox = lib.mkOption {
-                            type = lib.types.nullOr lib.types.bool;
-                            default = null;
-                            description = "Sandbox this script with bubblewrap. Overrides namespace-level and top-level sandbox.";
+                          sharePath = lib.mkOption {
+                            type = lib.types.bool;
+                            default = false;
+                            description = "Inherit PATH from the testbed. If the testbed inherits PATH from the host, host tools become available.";
+                          };
+                          shareEnv = lib.mkOption {
+                            type = lib.types.bool;
+                            default = false;
+                            description = "Inherit environment variables from the testbed. If the testbed inherits environment variables from the host, host environment becomes available.";
+                          };
+                          shareMount = lib.mkOption {
+                            type = lib.types.bool;
+                            default = false;
+                            description = "Share the filesystem with the testbed. If the testbed shares the host filesystem, host files become accessible.";
+                          };
+                          shareWayland = lib.mkOption {
+                            type = lib.types.bool;
+                            default = false;
+                            description = "Bind the Wayland display socket and graphics devices into the sandbox, enabling GUI applications.";
+                          };
+                          sharePid = lib.mkOption {
+                            type = lib.types.bool;
+                            default = false;
+                            description = "Share the PID namespace with the testbed.";
                           };
                         };
                       }
@@ -227,17 +261,12 @@
                     default = null;
                     description = "Working directory for this namespace's scripts. Relative to the testbed workDir if not absolute.";
                   };
-                  sandbox = lib.mkOption {
-                    type = lib.types.nullOr lib.types.bool;
-                    default = null;
-                    description = "Sandbox all scripts in this namespace with bubblewrap. Overrides top-level sandbox.";
-                  };
                   sysctl = nixosSysctlOption;
                   networking = lib.mkOption {
                     default = { };
                     description = "Network interface configuration. Compatible with NixOS networking.";
                     type = lib.types.submodule {
-                      options = inheritFromNixpkgs "networking" nixosNetworkingOpts {
+                      options = inheritFromNixpkgs "networking" {
                         defaultGateway = null;
                         defaultGateway6 = null;
                         interfaces."<name>" = {
@@ -286,6 +315,7 @@
                     default = null;
                     description = "Prefill ARP table for both endpoints of this veth pair. Overrides top-level arpPrefill.";
                   };
+                  mtu = nixosOpt "networking.interfaces.<name>.mtu" "Overrides top-level mtu.";
                   a = lib.mkOption {
                     type = iface;
                     description = "First endpoint of this veth pair.";
@@ -339,20 +369,35 @@
           packages = lib.mkOption {
             type = lib.types.listOf lib.types.package;
             default = [ ];
-            description = "Packages prepended to PATH for all scripts in all namespaces.";
-          };
-          sandbox = lib.mkOption {
-            type = lib.types.bool;
-            default = true;
-            description = "Sandbox all scripts with bubblewrap: read-only filesystem, write access limited to workDir. Can be overridden per namespace or per script.";
+            description = "Packages prepended to PATH for testbed hooks (preSetup, postSetup, preRun, postRun). Not automatically available to scripts; set sharePath on a script to inherit these.";
           };
           sysctl = nixosSysctlOption // {
             description = nixosSysctlOption.description + " Can be overridden per namespace.";
           };
-          inheritPath = lib.mkOption {
+          sharePath = lib.mkOption {
             type = lib.types.bool;
             default = false;
-            description = "Append the system PATH. Useful for accessing host tools not managed by Nix.";
+            description = "Prepend the system PATH. Useful for accessing host tools not managed by Nix. If the tool is not in the Nix store, shareMount may also be required.";
+          };
+          shareEnv = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Inherit all environment variables from the calling environment. PATH is still controlled separately by sharePath.";
+          };
+          shareMount = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Bind the host filesystem into the sandbox.";
+          };
+          shareWayland = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Bind the Wayland display socket and graphics devices into the sandbox, enabling GUI applications.";
+          };
+          sharePid = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Share the PID namespace with the host.";
           };
           preSetup = lib.mkOption {
             type = lib.types.str;
@@ -409,11 +454,19 @@
         pkgs: tb:
         let
           lib = pkgs.lib;
+          wrap = import ./wrap.nix pkgs;
           namespaces = tb.namespaces;
           veths = tb.veths;
           workDir = tb.workDir;
           workDirEnsureEmpty = tb.workDirEnsureEmpty;
           name = tb.name;
+
+          # Find the veth that connects to a given namespace interface, or null if absent.
+          getVeth =
+            nsName: ifaceName:
+            lib.findFirst (
+              v: (v.a.ns == nsName && v.a.iface == ifaceName) || (v.b.ns == nsName && v.b.iface == ifaceName)
+            ) null veths;
 
           # Look up the interface config for a veth endpoint from its namespace, or null if absent.
           getNsIface =
@@ -455,57 +508,37 @@
               (veth.a.ns == ns && veth.a.iface == ifaceName) || (veth.b.ns == ns && veth.b.iface == ifaceName)
             ) veths;
 
-          # Compute the PATH for a script: user packages only (runtime deps are for the outer script).
-          mkScriptPkgs = nsCfg: scriptCfg: tb.packages ++ nsCfg.packages ++ scriptCfg.packages;
+          # Compute the PATH for a script: runtime deps + namespace + script packages.
+          # Top-level packages are only available to testbed hooks; use sharePath to expose them to scripts.
+          mkScriptPkgs = nsCfg: scriptCfg: runtimeDeps ++ nsCfg.packages ++ scriptCfg.packages;
 
-          # Build _PATH assignment lines for a script's package list (indented for use inside a subshell).
-          mkScriptPathLines =
-            pkgs:
-            [ (if tb.inheritPath then "  _PATH=\"$PATH\" # inherit PATH" else "  _PATH=\"\" # clear PATH") ]
-            ++ map (p: "  _PATH=\"${lib.getBin p}/bin:$_PATH\"") pkgs;
+          # Write a script entry to a store path, preserving Nix string context.
+          mkScriptFile =
+            nsName: idx: scriptCfg:
+            pkgs.writeScript "${name}-script-${nsName}-${toString idx}" ''
+              #!${pkgs.bash}/bin/bash
+              ${scriptCfg.exec}
+            '';
 
-          # Build the indented, escaped bash -c argument for a script entry.
-          mkScriptArg =
-            nsCfg: scriptCfg:
-            let
-              body = lib.strings.trim scriptCfg.exec;
-              indented = lib.concatStringsSep "\n" (
-                map (l: if l == "" then "" else "    " + l) (lib.splitString "\n" body)
-              );
-            in
-            lib.escapeShellArg ("\n" + indented + "\n  ");
+          # Pre-computed script files per namespace: { nsName -> [file0, file1, ...] }
+          nsScriptFiles = lib.mapAttrs (
+            nsName: nsCfg: lib.imap0 (idx: scriptCfg: mkScriptFile nsName idx scriptCfg) nsCfg.scripts
+          ) namespaces;
 
           # cd into the namespace workDir, creating it as the original user if needed.
           mkCdNs =
             nsCfg:
-            lib.optionalString (nsCfg.workDir != null)
-              "\${SUDO_UID:+setpriv --reuid=\"\$SUDO_UID\" --regid=\"\$SUDO_GID\" --clear-groups --} mkdir -p '${nsCfg.workDir}'\n  cd '${nsCfg.workDir}'";
+            lib.optionalString (nsCfg.workDir != null) "mkdir -p '${nsCfg.workDir}'\n  cd '${nsCfg.workDir}'";
 
-          # Runtime dependencies of the generated testbed binary.
-          # These are only for the outer script.
-          runtimeDeps = [
-            pkgs.bash
-            pkgs.iproute2
-            pkgs.coreutils
-            pkgs.gnused
-            pkgs.procps
-            pkgs.util-linux
-            pkgs.bubblewrap
+          # Packages always available in PATH for both the testbed binary and all scripts.
+          runtimeDeps = with pkgs; [
+            bash
+            coreutils
+            gnused
+            iproute2
+            procps
+            util-linux
           ];
-
-          # Build the bwrap prefix for sandboxing a script (empty string when sandbox is disabled).
-          # Mounts /nix read-only so scripts can access Nix-store binaries,
-          # while only the current working directory is writable.
-          mkBwrapPrefix =
-            nsCfg: scriptCfg:
-            let
-              sandboxed = resolveFirst "sandbox" [
-                scriptCfg
-                nsCfg
-                tb
-              ];
-            in
-            lib.optionalString sandboxed ''"''${_BWRAP[@]}" --bind "$PWD" "$PWD" --'';
 
           # {} in workDir enables repeated-run mode: the script accepts N as $1
           # and loops N times, substituting {} with a zero-padded index each run.
@@ -539,7 +572,7 @@
 
           # Testbed-level sysctl defaults (lowest priority, can be overridden via tb.sysctl or ns.sysctl)
           tbSysctlDefaults = {
-            "net.ipv4.ping_group_range" = "0 2147483647";
+            "net.ipv4.ping_group_range" = "0 0";
             "net.ipv4.ip_unprivileged_port_start" = 0;
           };
 
@@ -682,8 +715,10 @@
               lib.mapAttrsToList (
                 ifaceName: ifaceCfg:
                 let
+                  veth = getVeth nsName ifaceName;
                   mtu = resolveFirst "mtu" [
                     ifaceCfg
+                    veth
                     tb
                   ];
                 in
@@ -723,10 +758,12 @@
             concatNonEmpty [
               (mkNetemCmd veth.a.ns (resolveNetem veth.netem (ifaceA.netem or null)) (resolveFirst "mtu" [
                 ifaceA
+                veth
                 tb
               ]) veth.a.iface)
               (mkNetemCmd veth.b.ns (resolveNetem veth.netem (ifaceB.netem or null)) (resolveFirst "mtu" [
                 ifaceB
+                veth
                 tb
               ]) veth.b.iface)
             ]
@@ -841,11 +878,10 @@
             lib.mapAttrsToList (
               name: nsCfg:
               lib.concatLists (
-                map (
-                  scriptCfg:
+                lib.imap0 (
+                  idx: scriptCfg:
                   lib.optional (!scriptCfg.foreground) (
                     let
-                      script = mkScriptArg nsCfg scriptCfg;
                       toOutput =
                         if
                           resolveFirst "stdout" [
@@ -864,9 +900,8 @@
                         "  set +m"
                       ]
                       ++ lib.optional (cdNs != "") "  ${cdNs}"
-                      ++ mkScriptPathLines (mkScriptPkgs nsCfg scriptCfg)
                       ++ [
-                        "  stdbuf -oL ${execNs name}\${SUDO_UID:+setpriv --reuid=\"\$SUDO_UID\" --regid=\"\$SUDO_GID\" --clear-groups --} ${mkBwrapPrefix nsCfg scriptCfg} \"$_ENV\" PATH=\"$_PATH\" \"$_BASH\" -c ${script} ${toOutput}"
+                        "  stdbuf -oL ${execNs name}\"$(dirname \"$0\")/../scripts/${name}/${toString idx}\" ${toOutput}"
                         ") &"
                         "echo \"${name}| PID $! started\""
                         "PIDS+=($!)"
@@ -884,11 +919,10 @@
             lib.mapAttrsToList (
               name: nsCfg:
               lib.concatLists (
-                map (
-                  scriptCfg:
+                lib.imap0 (
+                  idx: scriptCfg:
                   lib.optional scriptCfg.foreground (
                     let
-                      script = mkScriptArg nsCfg scriptCfg;
                       cdNs = mkCdNs nsCfg;
                     in
                     concatNonEmpty (
@@ -897,9 +931,8 @@
                         "("
                       ]
                       ++ lib.optional (cdNs != "") "  ${cdNs}"
-                      ++ mkScriptPathLines (mkScriptPkgs nsCfg scriptCfg)
                       ++ [
-                        "  ${execNs name}\${SUDO_UID:+setpriv --reuid=\"\$SUDO_UID\" --regid=\"\$SUDO_GID\" --clear-groups --} ${mkBwrapPrefix nsCfg scriptCfg} \"$_ENV\" PATH=\"$_PATH\" \"$_BASH\" -c ${script}"
+                        "  ${execNs name}\"$(dirname \"$0\")/../scripts/${name}/${toString idx}\""
                         ")"
                         "echo \"${name}| end foreground script\""
                       ]
@@ -918,47 +951,24 @@
               (lib.strings.trim ''
                 # wait for background processes marked as await
                 for PID in "''${WAIT_PIDS[@]}"; do
-                  wait "$PID" 2>/dev/null || true
+                  wait "$PID" || true
                   echo "testbed| PID $PID ended"
                 done
               '')
               (mkBashSection "post-run hook" [ tb.postRun ])
             ]
           );
-        in
-        pkgs.writeShellApplication {
-          inherit name;
-          excludeShellChecks = [ "SC2016" ]; # $PATH in bash -c single-quoted arg is intentional
-          text = ''
-            ${mkBashSection "setup PATH" (
-              [ (if tb.inheritPath then "_PATH=\"$PATH\" # inherit PATH" else "_PATH=\"\" # clear PATH") ]
-              ++ map (p: "_PATH=\"${lib.getBin p}/bin:$_PATH\"") runtimeDeps
-              ++ [ "export PATH=\"$_PATH\"" ]
-            )}
-
-            if [ -z "''${_TESTBED_CLEAN_ENV+x}" ]; then
-              exec env -i \
-                _TESTBED_CLEAN_ENV=1 \
-                SUDO_UID="''${SUDO_UID:-}" \
-                SUDO_GID="''${SUDO_GID:-}" \
-                DISPLAY="''${DISPLAY:-}" \
-                XAUTHORITY="''${XAUTHORITY:-}" \
-                WAYLAND_DISPLAY="''${WAYLAND_DISPLAY:-}" \
-                DBUS_SESSION_BUS_ADDRESS="''${DBUS_SESSION_BUS_ADDRESS:-}" \
-                "''${BASH_SOURCE[0]}" "$@"
-            fi
-
-            if [ "$EUID" -ne 0 ]; then echo "testbed| Error: Run as root"; exit 1; fi
+          scriptText = ''
+            #!${pkgs.bash}/bin/bash
+            set -o errexit
+            set -o nounset
+            set -o pipefail
 
             set -m  # enable job control: each background job gets its own process group
 
             PIDS=()
             WAIT_PIDS=()
             NETNS=()
-
-            _BASH='${pkgs.bash}/bin/bash'
-            _ENV='${pkgs.coreutils}/bin/env'
-            _BWRAP=(bwrap --ro-bind /nix /nix --ro-bind /sys /sys --dev /dev --proc /proc --tmpfs /tmp --unshare-all --share-net --clearenv)
 
             cleanup() {
               echo "testbed| cleaning up..."
@@ -1003,7 +1013,7 @@
               fi
             ''}
             ${lib.optionalString (workDir != null) ''
-              ''${SUDO_UID:+setpriv --reuid="$SUDO_UID" --regid="$SUDO_GID" --clear-groups --} mkdir -p "$_WORK_DIR"
+              mkdir -p "$_WORK_DIR"
               cd "$_WORK_DIR"
             ''}
 
@@ -1012,6 +1022,41 @@
             echo "testbed| network topology set up"
 
             ${runPhaseSections}'';
+        in
+        pkgs.stdenv.mkDerivation {
+          pname = name;
+          version = "0";
+          dontUnpack = true;
+          strictDeps = true;
+          nativeBuildInputs = [ wrap ];
+          installPhase = ''
+            mkdir -p $out/bin
+          ''
+          + lib.concatStrings (
+            lib.mapAttrsToList (
+              nsName: nsCfg:
+              lib.concatStrings (
+                lib.imap0 (
+                  idx: scriptCfg:
+                  let
+                    scriptFile = builtins.elemAt nsScriptFiles.${nsName} idx;
+                    scriptPath = lib.makeBinPath (mkScriptPkgs nsCfg scriptCfg);
+                  in
+                  ''
+                    mkdir -p $out/scripts/${nsName}
+                    install -m 0755 ${scriptFile} $out/scripts/${nsName}/${toString idx}
+                    wrap $out/scripts/${nsName}/${toString idx} "${scriptPath}"${lib.optionalString scriptCfg.sharePath " --share-path"}${lib.optionalString scriptCfg.shareEnv " --share-env"}${lib.optionalString scriptCfg.shareMount " --share-mount"}${lib.optionalString scriptCfg.shareWayland " --share-wayland"}${lib.optionalString scriptCfg.sharePid " --share-pid"}${lib.optionalString (nsCfg.workDir != null) " --bind-pwd"}
+                  ''
+                ) nsCfg.scripts
+              )
+            ) namespaces
+          )
+          + ''
+            cp ${pkgs.writeScript name scriptText} $out/bin/${name}
+            chmod +x $out/bin/${name}
+            wrap $out/bin/${name} "${lib.makeBinPath (runtimeDeps ++ tb.packages)}" --testbed${lib.optionalString tb.sharePath " --share-path"}${lib.optionalString tb.shareEnv " --share-env"}${lib.optionalString tb.shareMount " --share-mount"}${lib.optionalString tb.shareWayland " --share-wayland"}${lib.optionalString tb.sharePid " --share-pid"}${lib.optionalString (tb.workDir != null) " --bind-pwd"}
+          '';
+          meta.mainProgram = name;
         };
       buildMermaid =
         pkgs: tb:
@@ -1078,11 +1123,25 @@
       ];
 
       perSystem =
-        { pkgs, ... }:
+        { pkgs, lib, ... }:
         {
+          packages.nixnet-option-docs =
+            let
+              optionsDoc = (pkgs.nixosOptionsDoc {
+                options = (lib.evalModules { modules = [ { options = mkTestbedOptions pkgs; } ]; }).options;
+                transformOptions = opt: opt // {
+                  visible = opt.visible && !(lib.any (lib.hasPrefix "_") (lib.splitString "." opt.name));
+                };
+              }).optionsCommonMark;
+            in
+            pkgs.runCommand "nixnet-option-docs.md" { } ''
+              echo "# NixNet Options" > $out
+              echo >> $out
+              cat ${optionsDoc} >> $out
+            '';
+
           legacyPackages =
             let
-              lib = pkgs.lib;
               evalConfig =
                 networkConfig:
                 lib.evalModules {

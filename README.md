@@ -58,7 +58,7 @@ sudo nix run
 - **ARP control** — disable ARP or prefill tables with peer MACs
 - **Repeatable** — repeat with `sudo nix run . 1-5`; `{}` in `workDir` becomes a run index
 - **Foreground scripts** — full terminal access for interactive tools
-- **Sandboxing** — scripts are isolated with bubblewrap to prevent side effects
+- **Sandboxing** — scripts are isolated with Linux namespaces to prevent side effects; configurable filesystem, environment, and PATH sharing
 - **Automatic cleanup** — namespaces and processes cleaned up on exit
 - **Mermaid diagrams** — topology diagram from config
 
@@ -67,7 +67,7 @@ sudo nix run
 | | nixnet | [mininet](https://mininet.org) | [containerlab](https://containerlab.dev) | manual scripts |
 |---|---|---|---|---|
 | **Config** | Nix | Python | YAML | bash |
-| **Isolation** | network namespaces + bubblewrap | network namespaces | containers (Docker) | network namespaces |
+| **Isolation** | mnt, pid, net, ipc, uts, user namespaces | net namespaces | Docker | net namespaces |
 | **Reproducibility** | ✓ | ✗ | partial | ✗ |
 | **Real network stack** | ✓ | ✓ | ✓ | ✓ |
 | **Cleanup on exit** | ✓ | ✓ | ✓ | manual |
@@ -81,6 +81,7 @@ nixnet is designed for lightweight, reproducible experiments that run real appli
 
 - [ping](examples/ping/) — two namespaces, one veth link with netem delay
 - [iperf](examples/iperf/) — three namespaces with a forwarding router
+- [quiche_perf](examples/quiche_perf/) — QUIC throughput benchmark with rate-limited, delayed veth link
 
 ## Options
 
@@ -92,7 +93,7 @@ nixnet is designed for lightweight, reproducible experiments that run real appli
 | `namespaces` | `attrs` | `{}` | Network namespaces to create. |
 | `bridges` | `list` | `[]` | Linux bridges to create. Each bridge gets its own network namespace of the same name. |
 | `veths` | `list` | `[]` | Veth pairs connecting namespaces. |
-| `packages` | `list` | `[]` | Packages prepended to PATH for all scripts in all namespaces. |
+| `packages` | `list` | `[]` | Packages prepended to PATH for testbed hooks (`preSetup`, `postSetup`, `preRun`, `postRun`). Not automatically available to scripts; set `sharePath` on a script to inherit these. |
 | `workDir` | `str \| null` | `null` | Working directory for the testbed. Created if absent. If the path contains `{}`, it is replaced at runtime with a two-digit zero-padded run index (default `00`), e.g. `"./out/{}"` with `sudo nix run . -- 5` uses `./out/05`. Pass a range to run multiple times: `sudo nix run . -- 1-5`. |
 | `workDirEnsureEmpty` | `bool` | `false` | Abort if `workDir` is non-empty, preventing results from being overwritten. |
 | `stdout` | `bool` | `true` | Print script output to the console, prefixed with the namespace name. Can be overridden per namespace. |
@@ -100,8 +101,11 @@ nixnet is designed for lightweight, reproducible experiments that run real appli
 | `mtu` | `int \| null` | `null` | Default MTU for all interfaces. Can be overridden per interface via `networking.interfaces`. |
 | `arp` | `bool` | `true` | Enable ARP on all interfaces. Can be overridden per veth or per interface. |
 | `arpPrefill` | `bool` | `false` | Prefill ARP tables with peer MAC addresses at startup. Can be overridden per veth or per interface. |
-| `sandbox` | `bool` | `true` | Sandbox all scripts with bubblewrap: read-only filesystem access, write access limited to the script's working directory, isolated PID/UTS/IPC namespaces, cleared environment. Can be overridden per namespace or per script. |
-| `inheritPath` | `bool` | `false` | Append the system PATH. Useful for accessing host tools not managed by Nix. |
+| `sharePath` | `bool` | `false` | Prepend the system PATH. Useful for accessing host tools not managed by Nix. If the tool is not in the Nix store, `shareMount` may also be required. |
+| `shareEnv` | `bool` | `false` | Inherit all environment variables from the calling environment. PATH is still controlled separately by `sharePath`. |
+| `shareMount` | `bool` | `false` | Bind the host filesystem into the sandbox. |
+| `shareWayland` | `bool` | `false` | Bind the Wayland display socket and graphics devices into the sandbox, enabling GUI applications. |
+| `sharePid` | `bool` | `false` | Share the PID namespace with the host. |
 | `preSetup` | `str` | `""` | Shell code to run before the setup phase (before namespaces and links are created). Runs as root. |
 | `postSetup` | `str` | `""` | Shell code to run after the setup phase (after namespaces, links, and routes are configured). Runs as root. |
 | `preRun` | `str` | `""` | Shell code to run before the run phase (before scripts are launched). Runs as root. |
@@ -125,7 +129,6 @@ nixnet is designed for lightweight, reproducible experiments that run real appli
 | `scripts` | `list` | `[]` | Scripts to run in this namespace. Background scripts are launched in parallel; foreground scripts run sequentially after all background scripts are started. |
 | `stdout` | `bool \| null` | `null` | Print script output to the console. Overrides top-level `stdout`. |
 | `workDir` | `str \| null` | `null` | Working directory for all scripts in this namespace. Relative to the testbed `workDir` if not absolute. |
-| `sandbox` | `bool \| null` | `null` | Sandbox all scripts in this namespace with bubblewrap. Overrides top-level `sandbox`. |
 | `sysctl` | `attrs` | `{}` | Sysctl settings for this namespace. Same type as NixOS `boot.kernel.sysctl`. Merged with top-level `sysctl`; namespace values take precedence. Set a key to `null` to suppress a top-level default. |
 | `preSetup` | `str` | `""` | Shell code to run inside this namespace after it is created. Runs after testbed `preSetup`, before links and routes are configured. Runs as root. |
 | `postSetup` | `str` | `""` | Shell code to run inside this namespace after routing is configured. Runs before testbed `postSetup`. Runs as root. |
@@ -138,7 +141,11 @@ nixnet is designed for lightweight, reproducible experiments that run real appli
 | `await` | `bool` | `false` | Wait for this script to exit before stopping the testbed. Only applies to background scripts. |
 | `foreground` | `bool` | `false` | Run this script in the foreground without output redirection. Runs after all background scripts are started. Use for interactive shells or tools that require a terminal. |
 | `packages` | `list` | `[]` | Packages prepended to PATH for this script only. |
-| `sandbox` | `bool \| null` | `null` | Sandbox this script with bubblewrap. Overrides namespace-level and top-level `sandbox`. |
+| `sharePath` | `bool` | `false` | Inherit PATH from the testbed. If the testbed inherits PATH from the host, host tools become available. |
+| `shareEnv` | `bool` | `false` | Inherit environment variables from the testbed. If the testbed inherits environment variables from the host, host environment becomes available. |
+| `shareMount` | `bool` | `false` | Share the filesystem with the testbed. If the testbed shares the host filesystem, host files become accessible. |
+| `shareWayland` | `bool` | `false` | Bind the Wayland display socket and graphics devices into the sandbox, enabling GUI applications. |
+| `sharePid` | `bool` | `false` | Share the PID namespace with the testbed. |
 
 ### Veth options
 
@@ -147,6 +154,7 @@ nixnet is designed for lightweight, reproducible experiments that run real appli
 | `a` | `attrs` | — | First endpoint (see endpoint options below). |
 | `b` | `attrs` | — | Second endpoint (see endpoint options below). |
 | `netem` | `attrs \| null` | `null` | netem parameters applied to both endpoints. Individual fields can be overridden per interface via `networking.interfaces`. |
+| `mtu` | `int \| null` | `null` | MTU for both endpoints. Overrides top-level `mtu`. Can be overridden per interface via `networking.interfaces`. Compatible with NixOS `networking.interfaces.<name>.mtu`. |
 | `arp` | `bool \| null` | `null` | Enable ARP on both endpoints. Overrides top-level `arp`. |
 | `arpPrefill` | `bool \| null` | `null` | Prefill ARP tables for both endpoints. Overrides top-level `arpPrefill`. |
 
@@ -186,6 +194,13 @@ All hooks run as root — use with care.
 - Cleanup (SIGINT to all child processes, namespace deletion) happens automatically on exit.
 - Use `await = true` on a background script to block the testbed from exiting until that script finishes.
 - Use `foreground = true` for an interactive shell: `{ exec = "bash"; foreground = true; }`.
+
+## Generate Option Docs
+
+```shell
+nix build .#nixnet-option-docs
+cat result
+```
 
 ## Generate Mermaid Chart
 
