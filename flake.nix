@@ -209,12 +209,12 @@
                           await = lib.mkOption {
                             type = lib.types.bool;
                             default = false;
-                            description = "Wait for this script to finish before stopping the testbed.";
+                            description = "Wait for this script to finish before stopping the testbed. Only applies to background scripts.";
                           };
                           foreground = lib.mkOption {
                             type = lib.types.bool;
                             default = false;
-                            description = "Run this script in the foreground without output redirection. Runs after all background scripts are started.";
+                            description = "Run this script in the foreground without output redirection. Runs after all background scripts are started. Use for interactive shells or tools that require a terminal.";
                           };
                           packages = lib.mkOption {
                             type = lib.types.listOf lib.types.package;
@@ -249,7 +249,7 @@
                         };
                       }
                     );
-                    description = "Scripts to run in this namespace, launched in parallel.";
+                    description = "Scripts to run in this namespace. Background scripts are launched in parallel; foreground scripts run sequentially after all background scripts are started.";
                   };
                   stdout = lib.mkOption {
                     type = lib.types.nullOr lib.types.bool;
@@ -359,7 +359,7 @@
           workDir = lib.mkOption {
             type = lib.types.nullOr lib.types.str;
             default = null;
-            description = "Default working directory for all namespace scripts.";
+            description = "Default working directory for all namespace scripts. Created if absent. If the path contains \`{}\`, it is replaced at runtime with a two-digit zero-padded run index (default \`00\`), e.g. \`\"./out/{}\"\` with \`sudo nix run . 5\` uses \`./out/05\`. Pass a range to run multiple times: \`sudo nix run . 1-5\`.";
           };
           workDirEnsureEmpty = lib.mkOption {
             type = lib.types.bool;
