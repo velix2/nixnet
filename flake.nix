@@ -990,16 +990,21 @@
               if hasTemplate then
                 ''
                   # Accept a single run index (e.g. 3) or a range (e.g. 1-5).
-                  IFS='-' read -r _START _END <<< "''${1:-0}"
+                  # If no argument is given, find the next free index.
+                  IFS='-' read -r _START _END <<< "''${1:-}"
                   if [ -n "$_END" ]; then
                     for _RUN_NUM in $(seq "$_START" "$_END"); do
                       "$0" "$_RUN_NUM" || true
                     done
                     exit 0
                   fi
-                  _RUN=$(printf "%02d" "''${1:-0}")
-                  _WORK_DIR='${workDir}'
-                  _WORK_DIR="''${_WORK_DIR//\{\}/$_RUN}"
+                  _RUN_NUM=''${_START:-0}
+                  _WORK_DIR_TPL='${workDir}'
+                  _WORK_DIR="''${_WORK_DIR_TPL//\{\}/$(printf "%02d" "$_RUN_NUM")}"
+                  while [ -z "''${1:-}" ] && [ -e "$_WORK_DIR" ]; do
+                    _RUN_NUM=$((_RUN_NUM+1))
+                    _WORK_DIR="''${_WORK_DIR_TPL//\{\}/$(printf "%02d" "$_RUN_NUM")}"
+                  done
                 ''
               else
                 lib.optionalString (workDir != null) ''
