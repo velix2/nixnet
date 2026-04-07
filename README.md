@@ -85,6 +85,9 @@ nixnet is designed for lightweight, reproducible experiments that run real appli
 
 ## Options
 
+[Full Option Docs](https://github.com/birneee/nixnet/releases/download/latest/nixnet-options-docs.html)
+
+
 ### Top-level
 
 | Option | Type | Default | Description |
