@@ -251,11 +251,6 @@
                     );
                     description = "Scripts to run in this namespace. Background scripts are launched in parallel; foreground scripts run sequentially after all background scripts are started.";
                   };
-                  stdout = lib.mkOption {
-                    type = lib.types.nullOr lib.types.bool;
-                    default = null;
-                    description = "Enable script output from the console. Overrides top-level stdout.";
-                  };
                   workDir = lib.mkOption {
                     type = lib.types.nullOr lib.types.str;
                     default = null;
@@ -336,11 +331,6 @@
             description = "Bridges to create. Each bridge gets its own network namespace of the same name.";
           };
 
-          stdout = lib.mkOption {
-            type = lib.types.bool;
-            default = true;
-            description = "Enable script output from the console for all namespaces. Can be overridden per namespace.";
-          };
           arp = lib.mkOption {
             type = lib.types.bool;
             default = true;
@@ -418,6 +408,30 @@
             type = lib.types.str;
             default = "";
             description = "Shell code to run after the run phase (after all awaited scripts have exited). Runs as root.";
+          };
+          scripts = lib.mkOption {
+            default = [ ];
+            type = lib.types.listOf (
+              lib.types.submodule {
+                options = {
+                  exec = lib.mkOption {
+                    type = lib.types.str;
+                    description = "Script to run in the testbed context (no network namespace). May be multi-line.";
+                  };
+                  foreground = lib.mkOption {
+                    type = lib.types.bool;
+                    default = false;
+                    description = "Run this script in the foreground without output redirection. Runs after all background scripts are started. Use for interactive shells or tools that require a terminal.";
+                  };
+                  await = lib.mkOption {
+                    type = lib.types.bool;
+                    default = false;
+                    description = "Wait for this script to finish before stopping the testbed. Only applies to background scripts.";
+                  };
+                };
+              }
+            );
+            description = "Scripts to run in the testbed context (outside any network namespace). Background scripts are launched in parallel with namespace scripts; foreground scripts run sequentially after all background scripts are started.";
           };
           name = lib.mkOption {
             type = lib.types.str;
@@ -524,6 +538,9 @@
           nsScriptFiles = lib.mapAttrs (
             nsName: nsCfg: lib.imap0 (idx: scriptCfg: mkScriptFile nsName idx scriptCfg) nsCfg.scripts
           ) namespaces;
+
+          # Pre-computed script files for top-level testbed scripts: [file0, file1, ...]
+          tbScriptFiles = lib.imap0 (idx: scriptCfg: mkScriptFile "testbed" idx scriptCfg) tb.scripts;
 
           # cd into the namespace workDir, creating it as the original user if needed.
           mkCdNs =
@@ -873,75 +890,65 @@
             ]
           );
 
-          # Launch scripts in parallel; mark awaited ones; skip foreground scripts
-          launchScripts = lib.concatLists (
-            lib.mapAttrsToList (
-              name: nsCfg:
-              lib.concatLists (
+          # All scripts as a flat list of { label, scriptPath, exec, cdNs, scriptCfg }
+          allScripts =
+            lib.concatLists (
+              lib.mapAttrsToList (
+                name: nsCfg:
                 lib.imap0 (
-                  idx: scriptCfg:
-                  lib.optional (!scriptCfg.foreground) (
-                    let
-                      toOutput =
-                        if
-                          resolveFirst "stdout" [
-                            nsCfg
-                            tb
-                          ]
-                        then
-                          "2>&1 | sed 's/^/${name}| /'"
-                        else
-                          "> /dev/null 2>&1";
-                      cdNs = mkCdNs nsCfg;
-                    in
-                    concatNonEmpty (
-                      [
-                        "("
-                        "  set +m"
-                      ]
-                      ++ lib.optional (cdNs != "") "  ${cdNs}"
-                      ++ [
-                        "  stdbuf -oL ${execNs name}\"$(dirname \"$0\")/../scripts/${name}/${toString idx}\" ${toOutput}"
-                        ") &"
-                        "echo \"${name}| PID $! started\""
-                        "PIDS+=($!)"
-                      ]
-                      ++ lib.optional scriptCfg.await "WAIT_PIDS+=($!)"
-                    )
-                  )
+                  idx: scriptCfg: {
+                    label = name;
+                    scriptPath = "\"$(dirname \"$0\")/../namespaces/${name}/scripts/${toString idx}\"";
+                    exec = execNs name;
+                    cdNs = mkCdNs nsCfg;
+                    inherit scriptCfg;
+                  }
                 ) nsCfg.scripts
+              ) namespaces
+            )
+            ++ lib.imap0 (
+              idx: scriptCfg: {
+                label = "testbed";
+                scriptPath = "\"$(dirname \"$0\")/../scripts/${toString idx}\"";
+                exec = "";
+                cdNs = "";
+                inherit scriptCfg;
+              }
+            ) tb.scripts;
+
+          # Launch scripts in parallel; mark awaited ones; skip foreground scripts
+          launchScripts = lib.concatMap (
+            { label, scriptPath, exec, cdNs, scriptCfg }:
+            lib.optional (!scriptCfg.foreground) (
+              concatNonEmpty (
+                [ "(" "  set +m" ]
+                ++ lib.optional (cdNs != "") "  ${cdNs}"
+                ++ [
+                  "  stdbuf -oL ${exec}${scriptPath} 2>&1 | sed 's/^/${label}| /'"
+                  ") &"
+                  "echo \"${label}| PID $! started\""
+                  "PIDS+=($!)"
+                ]
+                ++ lib.optional scriptCfg.await "WAIT_PIDS+=($!)"
               )
-            ) namespaces
-          );
+            )
+          ) allScripts;
 
           # Foreground scripts (run after background scripts are started)
-          fgScripts = lib.concatLists (
-            lib.mapAttrsToList (
-              name: nsCfg:
-              lib.concatLists (
-                lib.imap0 (
-                  idx: scriptCfg:
-                  lib.optional scriptCfg.foreground (
-                    let
-                      cdNs = mkCdNs nsCfg;
-                    in
-                    concatNonEmpty (
-                      [
-                        "echo \"${name}| start foreground script\""
-                        "("
-                      ]
-                      ++ lib.optional (cdNs != "") "  ${cdNs}"
-                      ++ [
-                        "  ${execNs name}\"$(dirname \"$0\")/../scripts/${name}/${toString idx}\""
-                        ")"
-                        "echo \"${name}| end foreground script\""
-                      ]
-                    )
-                  )
-                ) nsCfg.scripts
+          fgScripts = lib.concatMap (
+            { label, scriptPath, exec, cdNs, scriptCfg }:
+            lib.optional scriptCfg.foreground (
+              concatNonEmpty (
+                [ "echo \"${label}| start foreground script\"" "(" ]
+                ++ lib.optional (cdNs != "") "  ${cdNs}"
+                ++ [
+                  "  ${exec}${scriptPath}"
+                  ")"
+                  "echo \"${label}| end foreground script\""
+                ]
               )
-            ) namespaces
-          );
+            )
+          ) allScripts;
 
           runPhaseSections = lib.concatStringsSep "\n\n" (
             lib.filter (s: s != "") [
@@ -1048,13 +1055,25 @@
                     scriptPath = lib.makeBinPath (mkScriptPkgs nsCfg scriptCfg);
                   in
                   ''
-                    mkdir -p $out/scripts/${nsName}
-                    install -m 0755 ${scriptFile} $out/scripts/${nsName}/${toString idx}
-                    wrap $out/scripts/${nsName}/${toString idx} "${scriptPath}"${lib.optionalString scriptCfg.sharePath " --share-path"}${lib.optionalString scriptCfg.shareEnv " --share-env"}${lib.optionalString scriptCfg.shareMount " --share-mount"}${lib.optionalString scriptCfg.shareWayland " --share-wayland"}${lib.optionalString scriptCfg.sharePid " --share-pid"}${lib.optionalString (nsCfg.workDir != null) " --bind-pwd"}
+                    mkdir -p $out/namespaces/${nsName}/scripts
+                    install -m 0755 ${scriptFile} $out/namespaces/${nsName}/scripts/${toString idx}
+                    wrap $out/namespaces/${nsName}/scripts/${toString idx} "${scriptPath}"${lib.optionalString scriptCfg.sharePath " --share-path"}${lib.optionalString scriptCfg.shareEnv " --share-env"}${lib.optionalString scriptCfg.shareMount " --share-mount"}${lib.optionalString scriptCfg.shareWayland " --share-wayland"}${lib.optionalString scriptCfg.sharePid " --share-pid"}${lib.optionalString (nsCfg.workDir != null) " --bind-pwd"}
                   ''
                 ) nsCfg.scripts
               )
             ) namespaces
+          )
+          + lib.concatStrings (
+            lib.imap0 (
+              idx: scriptCfg:
+              let
+                scriptFile = builtins.elemAt tbScriptFiles idx;
+              in
+              ''
+                mkdir -p $out/scripts
+                install -m 0755 ${scriptFile} $out/scripts/${toString idx}
+              ''
+            ) tb.scripts
           )
           + ''
             cp ${pkgs.writeScript name scriptText} $out/bin/${name}

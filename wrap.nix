@@ -78,6 +78,10 @@ let
       mkdir -p "$NEWROOT/dev/shm"
       mount -t tmpfs tmpfs "$NEWROOT/dev/shm" -o mode=1777
 
+      mkdir -p "$NEWROOT/dev/pts"
+      mount -t devpts devpts "$NEWROOT/dev/pts" -o newinstance,ptmxmode=0666
+      ln -sf /dev/pts/ptmx "$NEWROOT/dev/ptmx"
+
       ln -s /proc/self/fd "$NEWROOT/dev/fd"
       ln -s /proc/self/fd/0 "$NEWROOT/dev/stdin"
       ln -s /proc/self/fd/1 "$NEWROOT/dev/stdout"
@@ -146,6 +150,7 @@ let
         USER=root \
         REAL_UID="$REAL_UID" \
         PATH="$_PATH" \
+        TERM="''${TERM:-}" \
         {%- if SHARE_WAYLAND == "true" %}
         XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
         NIXOS_OZONE_WL="''${NIXOS_OZONE_WL:-}" \
@@ -163,6 +168,7 @@ let
         USER=user \
         REAL_UID="$REAL_UID" \
         PATH="$_PATH" \
+        TERM="''${TERM:-}" \
         {%- if SHARE_WAYLAND == "true" %}
         XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
         NIXOS_OZONE_WL="''${NIXOS_OZONE_WL:-}" \
