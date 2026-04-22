@@ -27,133 +27,9 @@
               specialArgs = { inherit utils pkgs; };
             }).options;
 
-          # Build a submodule options attrset from a spec tree mixed with NixOS options.
-          # nixosRoot: dot-path prefix for the context (e.g. "networking"), used in description suffix.
-          # ctx: NixOS options namespace (e.g. evaluated.options.networking).
-          # spec: attrset tree where each value is one of:
-          #   null            — inherit this option (description/type/default/example) from NixOS
-          #   lib.mkOption {} — use this custom option as-is
-          #   { "<name>" = subSpec; } — attrsOf keyed-by-name submodule; subSpec is the per-item spec
-          #   other attrset   — recurse into NixOS submodule/namespace with this sub-spec
-          inheritFromNixpkgs =
-            nixosRoot: spec:
-            let
-              isOpt = x: x ? _type && x._type == "option";
+          nixosSysctlOption = nixosOpts.boot.kernel.sysctl;
+          netem = import ./netem_options.nix pkgs;
 
-              getSubOptions =
-                nixosPath: type:
-                if type ? getSubOptions then
-                  type.getSubOptions [ ]
-                else if type ? nestedTypes.elemType.getSubOptions then
-                  type.nestedTypes.elemType.getSubOptions [ ]
-                else
-                  throw "inheritFromNixpkgs: cannot get sub-options of '${nixosPath}' (type: ${type.name or "unknown"})";
-
-              build =
-                pathSegs: context: specNode:
-                lib.mapAttrs (
-                  key: val:
-                  let
-                    nixosPath = lib.concatStringsSep "." (pathSegs ++ [ key ]);
-                    nixosSuffix = " Same type as NixOS ${nixosPath}.";
-                    child = context.${key};
-                  in
-                  if isOpt val then
-                    val
-                  else if val == null then
-                    lib.mkOption (
-                      {
-                        description = (child.description or "") + nixosSuffix;
-                        type = child.type or lib.types.unspecified;
-                      }
-                      // lib.optionalAttrs (child ? default) { inherit (child) default; }
-                      // lib.optionalAttrs (child ? example) { inherit (child) example; }
-                    )
-                  else if val ? "<name>" then
-                    lib.mkOption {
-                      description = (child.description or "") + nixosSuffix;
-                      default = { };
-                      type = lib.types.attrsOf (
-                        lib.types.submodule {
-                          options = build (
-                            pathSegs
-                            ++ [
-                              key
-                              "<name>"
-                            ]
-                          ) (getSubOptions nixosPath child.type) val."<name>";
-                        }
-                      );
-                    }
-                  else if isOpt child then
-                    lib.mkOption {
-                      description = (child.description or "") + nixosSuffix;
-                      default = { };
-                      type = lib.types.submodule {
-                        options = build (pathSegs ++ [ key ]) (getSubOptions nixosPath child.type) val;
-                      };
-                    }
-                  else
-                    lib.mkOption {
-                      description = nixosSuffix;
-                      default = { };
-                      type = lib.types.submodule {
-                        options = build (pathSegs ++ [ key ]) child val;
-                      };
-                    }
-                ) specNode;
-            in
-            build [ nixosRoot ] (lib.foldl (c: s: c.${s}) nixosOpts (lib.splitString "." nixosRoot)) spec;
-
-          # Inherit a single NixOS option by full dot-path.
-          # Inherit a single NixOS option by absolute dot-path.
-          # "<name>" segments descend into attrsOf element submodule options.
-          nixosOpt =
-            path: additionalDescription:
-            let
-              opt = lib.foldl (
-                ctx: seg: if seg == "<name>" then ctx.type.nestedTypes.elemType.getSubOptions [ ] else ctx.${seg}
-              ) nixosOpts (lib.splitString "." path);
-            in
-            opt
-            // {
-              description =
-                opt.description
-                + " Same type as NixOS ${path}."
-                + lib.optionalString (additionalDescription != "") " ${additionalDescription}";
-            };
-
-          nixosSysctlOption = (inheritFromNixpkgs "boot.kernel" { sysctl = null; }).sysctl;
-
-          netem = lib.types.submodule {
-            options = {
-              delayMs = lib.mkOption {
-                type = lib.types.nullOr lib.types.int;
-                default = null;
-                description = "One-way delay in milliseconds.";
-              };
-              lossPercent = lib.mkOption {
-                type = lib.types.nullOr (lib.types.addCheck lib.types.number (v: v >= 0 && v <= 100));
-                default = null;
-                description = "Packet loss percentage between 0 and 100 (e.g. 1 for 1%).";
-              };
-              rateMbit = lib.mkOption {
-                type = lib.types.nullOr lib.types.int;
-                default = null;
-                description = "Rate limit in Mbit/s.";
-              };
-              limit = lib.mkOption {
-                type = lib.types.nullOr lib.types.int;
-                default = null;
-                description = "Queue size in packets. Takes precedence over autoLimit.";
-              };
-              autoLimit = lib.mkOption {
-                type = lib.types.nullOr lib.types.bool;
-                default = null;
-                description = "Compute queue limit from bandwidth-delay product. Requires delayMs and rateMbit. Defaults to false if not set on link or interface level.";
-              };
-            };
-          };
           iface = lib.types.submodule {
             options = {
               ns = lib.mkOption {
@@ -166,24 +42,7 @@
               };
             };
           };
-          # Per-interface options added to networking.interfaces.<name>.
-          ifaceOptions = {
-            netem = lib.mkOption {
-              type = lib.types.nullOr netem;
-              default = null;
-              description = "netem traffic shaping parameters. Overrides veth-level netem.";
-            };
-            arp = lib.mkOption {
-              type = lib.types.nullOr lib.types.bool;
-              default = null;
-              description = "Enable ARP on this interface. Overrides veth-level and top-level arp.";
-            };
-            arpPrefill = lib.mkOption {
-              type = lib.types.nullOr lib.types.bool;
-              default = null;
-              description = "Prefill ARP table with the peer's MAC address. Overrides veth-level and top-level arpPrefill.";
-            };
-          };
+
         in
         {
           namespaces = lib.mkOption {
@@ -257,24 +116,7 @@
                     description = "Working directory for this namespace's scripts. Relative to the testbed workDir if not absolute.";
                   };
                   sysctl = nixosSysctlOption;
-                  networking = lib.mkOption {
-                    default = { };
-                    description = "Network interface configuration. Compatible with NixOS networking.";
-                    type = lib.types.submodule {
-                      options = inheritFromNixpkgs "networking" {
-                        defaultGateway = null;
-                        defaultGateway6 = null;
-                        interfaces."<name>" = {
-                          ipv4.addresses = null;
-                          ipv4.routes = null;
-                          ipv6.addresses = null;
-                          ipv6.routes = null;
-                          mtu = null;
-                        }
-                        // ifaceOptions;
-                      };
-                    };
-                  };
+                  networking = import ./networking_options.nix { inherit pkgs nixpkgs; };
                   preSetup = lib.mkOption {
                     type = lib.types.str;
                     default = "";
@@ -310,7 +152,16 @@
                     default = null;
                     description = "Prefill ARP table for both endpoints of this veth pair. Overrides top-level arpPrefill.";
                   };
-                  mtu = nixosOpt "networking.interfaces.<name>.mtu" "Overrides top-level mtu.";
+                  mtu =
+                    let
+                      nixosMtu = (nixosOpts.networking.interfaces.type.nestedTypes.elemType.getSubOptions [ ]).mtu;
+                    in
+                    lib.mkOption {
+                      inherit (nixosMtu) type default example;
+                      description =
+                        nixosMtu.description
+                        + " Same type as NixOS networking.interfaces.<name>.mtu. Overrides top-level mtu.";
+                    };
                   a = lib.mkOption {
                     type = iface;
                     description = "First endpoint of this veth pair.";
@@ -341,11 +192,16 @@
             default = false;
             description = "Global default arpPrefill setting for all interfaces.";
           };
-          mtu = lib.mkOption {
-            type = lib.types.nullOr lib.types.int;
-            default = null;
-            description = "Global default MTU for all veth interfaces. Can be overridden per interface via networking.interfaces.";
-          };
+          mtu =
+            let
+              nixosMtu = (nixosOpts.networking.interfaces.type.nestedTypes.elemType.getSubOptions [ ]).mtu;
+            in
+            lib.mkOption {
+              inherit (nixosMtu) type default example;
+              description =
+                nixosMtu.description
+                + " Same type as NixOS networking.interfaces.<name>.mtu. Global default for all interfaces. Can be overridden per veth via veths.*.mtu or per interface via networking.interfaces.<name>.mtu.";
+            };
           workDir = lib.mkOption {
             type = lib.types.nullOr lib.types.str;
             default = null;
@@ -895,33 +751,38 @@
             lib.concatLists (
               lib.mapAttrsToList (
                 name: nsCfg:
-                lib.imap0 (
-                  idx: scriptCfg: {
-                    label = name;
-                    scriptPath = "\"$(dirname \"$0\")/../namespaces/${name}/scripts/${toString idx}\"";
-                    exec = execNs name;
-                    cdNs = mkCdNs nsCfg;
-                    inherit scriptCfg;
-                  }
-                ) nsCfg.scripts
+                lib.imap0 (idx: scriptCfg: {
+                  label = name;
+                  scriptPath = "\"$(dirname \"$0\")/../namespaces/${name}/scripts/${toString idx}\"";
+                  exec = execNs name;
+                  cdNs = mkCdNs nsCfg;
+                  inherit scriptCfg;
+                }) nsCfg.scripts
               ) namespaces
             )
-            ++ lib.imap0 (
-              idx: scriptCfg: {
-                label = "testbed";
-                scriptPath = "\"$(dirname \"$0\")/../scripts/${toString idx}\"";
-                exec = "";
-                cdNs = "";
-                inherit scriptCfg;
-              }
-            ) tb.scripts;
+            ++ lib.imap0 (idx: scriptCfg: {
+              label = "testbed";
+              scriptPath = "\"$(dirname \"$0\")/../scripts/${toString idx}\"";
+              exec = "";
+              cdNs = "";
+              inherit scriptCfg;
+            }) tb.scripts;
 
           # Launch scripts in parallel; mark awaited ones; skip foreground scripts
           launchScripts = lib.concatMap (
-            { label, scriptPath, exec, cdNs, scriptCfg }:
+            {
+              label,
+              scriptPath,
+              exec,
+              cdNs,
+              scriptCfg,
+            }:
             lib.optional (!scriptCfg.foreground) (
               concatNonEmpty (
-                [ "(" "  set +m" ]
+                [
+                  "("
+                  "  set +m"
+                ]
                 ++ lib.optional (cdNs != "") "  ${cdNs}"
                 ++ [
                   "  stdbuf -oL ${exec}${scriptPath} 2>&1 | sed 's/^/${label}| /'"
@@ -936,10 +797,19 @@
 
           # Foreground scripts (run after background scripts are started)
           fgScripts = lib.concatMap (
-            { label, scriptPath, exec, cdNs, scriptCfg }:
+            {
+              label,
+              scriptPath,
+              exec,
+              cdNs,
+              scriptCfg,
+            }:
             lib.optional scriptCfg.foreground (
               concatNonEmpty (
-                [ "echo \"${label}| start foreground script\"" "(" ]
+                [
+                  "echo \"${label}| start foreground script\""
+                  "("
+                ]
                 ++ lib.optional (cdNs != "") "  ${cdNs}"
                 ++ [
                   "  ${exec}${scriptPath}"
@@ -1057,7 +927,9 @@
                   ''
                     mkdir -p $out/namespaces/${nsName}/scripts
                     install -m 0755 ${scriptFile} $out/namespaces/${nsName}/scripts/${toString idx}
-                    wrap $out/namespaces/${nsName}/scripts/${toString idx} "${scriptPath}"${lib.optionalString scriptCfg.sharePath " --share-path"}${lib.optionalString scriptCfg.shareEnv " --share-env"}${lib.optionalString scriptCfg.shareMount " --share-mount"}${lib.optionalString scriptCfg.shareWayland " --share-wayland"}${lib.optionalString scriptCfg.sharePid " --share-pid"}${lib.optionalString (nsCfg.workDir != null) " --bind-pwd"}
+                    wrap $out/namespaces/${nsName}/scripts/${toString idx} "${scriptPath}"${lib.optionalString scriptCfg.sharePath " --share-path"}${lib.optionalString scriptCfg.shareEnv " --share-env"}${lib.optionalString scriptCfg.shareMount " --share-mount"}${lib.optionalString scriptCfg.shareWayland " --share-wayland"}${lib.optionalString scriptCfg.sharePid " --share-pid"}${
+                      lib.optionalString (nsCfg.workDir != null) " --bind-pwd"
+                    }
                   ''
                 ) nsCfg.scripts
               )
@@ -1078,7 +950,11 @@
           + ''
             cp ${pkgs.writeScript name scriptText} $out/bin/${name}
             chmod +x $out/bin/${name}
-            wrap $out/bin/${name} "${lib.makeBinPath (runtimeDeps ++ tb.packages)}" --testbed${lib.optionalString tb.sharePath " --share-path"}${lib.optionalString tb.shareEnv " --share-env"}${lib.optionalString tb.shareMount " --share-mount"}${lib.optionalString tb.shareWayland " --share-wayland"}${lib.optionalString tb.sharePid " --share-pid"}${lib.optionalString (tb.workDir != null) " --bind-pwd"}
+            wrap $out/bin/${name} "${
+              lib.makeBinPath (runtimeDeps ++ tb.packages)
+            }" --testbed${lib.optionalString tb.sharePath " --share-path"}${lib.optionalString tb.shareEnv " --share-env"}${lib.optionalString tb.shareMount " --share-mount"}${lib.optionalString tb.shareWayland " --share-wayland"}${lib.optionalString tb.sharePid " --share-pid"}${
+              lib.optionalString (tb.workDir != null) " --bind-pwd"
+            }
           '';
           meta.mainProgram = name;
         };
@@ -1151,12 +1027,16 @@
         {
           packages.nixnet-option-docs =
             let
-              optionsDoc = (pkgs.nixosOptionsDoc {
-                options = (lib.evalModules { modules = [ { options = mkTestbedOptions pkgs; } ]; }).options;
-                transformOptions = opt: opt // {
-                  visible = opt.visible && !(lib.any (lib.hasPrefix "_") (lib.splitString "." opt.name));
-                };
-              }).optionsCommonMark;
+              optionsDoc =
+                (pkgs.nixosOptionsDoc {
+                  options = (lib.evalModules { modules = [ { options = mkTestbedOptions pkgs; } ]; }).options;
+                  transformOptions =
+                    opt:
+                    opt
+                    // {
+                      visible = opt.visible && !(lib.any (lib.hasPrefix "_") (lib.splitString "." opt.name));
+                    };
+                }).optionsCommonMark;
             in
             pkgs.runCommand "nixnet-option-docs.md" { } ''
               echo "# NixNet Options" > $out
