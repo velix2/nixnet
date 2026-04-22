@@ -699,6 +699,7 @@
                       "${execNs name}${ipCmd} route add ${route.address}/${toString route.prefixLength}"
                       + lib.optionalString (route.via or null != null) " via ${route.via}"
                       + " dev ${ifaceName}"
+                      + lib.concatStringsSep "" (lib.mapAttrsToList (k: v: " ${k} ${v}") (route.options or { }))
                     ) (getRoutes ifaceCfg)
                   ) nsCfg.networking.interfaces
                 )
