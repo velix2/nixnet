@@ -54,7 +54,7 @@
                   packages = lib.mkOption {
                     type = lib.types.listOf lib.types.package;
                     default = [ ];
-                    description = "Packages prepended to PATH for all scripts in this namespace.";
+                    description = "Packages prepended to PATH for all scripts in this namespace. Takes precedence over namespacePackages.";
                   };
                   scripts = lib.mkOption {
                     default = [ ];
@@ -74,11 +74,6 @@
                             type = lib.types.bool;
                             default = false;
                             description = "Run this script in the foreground without output redirection. Runs after all background scripts are started. Use for interactive shells or tools that require a terminal.";
-                          };
-                          packages = lib.mkOption {
-                            type = lib.types.listOf lib.types.package;
-                            default = [ ];
-                            description = "Packages prepended to PATH for this script only.";
                           };
                           sharePath = lib.mkOption {
                             type = lib.types.bool;
@@ -112,8 +107,8 @@
                   };
                   workDir = lib.mkOption {
                     type = lib.types.nullOr lib.types.str;
-                    default = null;
-                    description = "Working directory for this namespace's scripts. Relative to the testbed workDir if not absolute.";
+                    default = "{namespace}";
+                    description = "Working directory for this namespace. Relative to the testbed workDir if not absolute. \`{namespace}\` is replaced with the namespace name.";
                   };
                   sysctl = nixosSysctlOption;
                   networking = import ./networking_options.nix { inherit pkgs nixpkgs; };
@@ -204,18 +199,37 @@
             };
           workDir = lib.mkOption {
             type = lib.types.nullOr lib.types.str;
-            default = null;
-            description = "Default working directory for all namespace scripts. Created if absent. If the path contains \`{}\`, it is replaced at runtime with a two-digit zero-padded run index (default \`00\`), e.g. \`\"./out/{}\"\` with \`sudo nix run . 5\` uses \`./out/05\`. Pass a range to run multiple times: \`sudo nix run . 1-5\`.";
+            default = "out/{run}";
+            description = "Working directory for the testbed. Created if absent. \`{run}\` is replaced at runtime with a two-digit zero-padded run index (default \`00\`), e.g. with \`nix run . 5\` uses \`out/05\`. Pass a range to run multiple times: \`nix run . 1-5\`.";
           };
           workDirEnsureEmpty = lib.mkOption {
             type = lib.types.bool;
-            default = false;
+            default = true;
             description = "Abort if workDir exists and is not empty, preventing existing results from being overwritten.";
           };
-          packages = lib.mkOption {
+          namespacePackages = lib.mkOption {
             type = lib.types.listOf lib.types.package;
-            default = [ ];
-            description = "Packages prepended to PATH for testbed hooks (preSetup, postSetup, preRun, postRun). Not automatically available to scripts; set sharePath on a script to inherit these.";
+            default = with pkgs; [
+              bash
+              coreutils
+              gnused
+              iproute2
+              procps
+              util-linux
+            ];
+            description = "Packages prepended to PATH for all namespaces. Lower priority than namespace-level packages. Defaults to a set of standard tools; extend with \`lib.mkOptionDefault [ yourPkg ]\`.";
+          };
+          testbedPackages = lib.mkOption {
+            type = lib.types.listOf lib.types.package;
+            default = with pkgs; [
+              bash
+              coreutils
+              gnused
+              iproute2
+              procps
+              util-linux
+            ];
+            description = "Packages prepended to PATH for testbed hooks (preSetup, postSetup, preRun, postRun) and testbed-level scripts. Defaults to a set of standard tools; extend with \`lib.mkOptionDefault [ yourPkg ]\`.";
           };
           sysctl = nixosSysctlOption // {
             description = nixosSysctlOption.description + " Can be overridden per namespace.";
@@ -378,9 +392,8 @@
               (veth.a.ns == ns && veth.a.iface == ifaceName) || (veth.b.ns == ns && veth.b.iface == ifaceName)
             ) veths;
 
-          # Compute the PATH for a script: runtime deps + namespace + script packages.
-          # Top-level packages are only available to testbed hooks; use sharePath to expose them to scripts.
-          mkScriptPkgs = nsCfg: scriptCfg: runtimeDeps ++ nsCfg.packages ++ scriptCfg.packages;
+          # Compute the PATH for a script
+          mkScriptPkgs = nsCfg: _scriptCfg: nsCfg.packages ++ tb.namespacePackages;
 
           # Write a script entry to a store path, preserving Nix string context.
           mkScriptFile =
@@ -400,22 +413,15 @@
 
           # cd into the namespace workDir, creating it as the original user if needed.
           mkCdNs =
-            nsCfg:
-            lib.optionalString (nsCfg.workDir != null) "mkdir -p '${nsCfg.workDir}'\n  cd '${nsCfg.workDir}'";
+            nsName: nsCfg:
+            let
+              dir = builtins.replaceStrings [ "{namespace}" ] [ nsName ] nsCfg.workDir;
+            in
+            lib.optionalString (nsCfg.workDir != null) "mkdir -p '${dir}'\n  cd '${dir}'";
 
-          # Packages always available in PATH for both the testbed binary and all scripts.
-          runtimeDeps = with pkgs; [
-            bash
-            coreutils
-            gnused
-            iproute2
-            procps
-            util-linux
-          ];
-
-          # {} in workDir enables repeated-run mode: the script accepts N as $1
-          # and loops N times, substituting {} with a zero-padded index each run.
-          hasTemplate = workDir != null && lib.hasInfix "{}" workDir;
+          # {run} in workDir enables repeated-run mode: the script accepts N as $1
+          # and loops N times, substituting {run} with a zero-padded index each run.
+          hasTemplate = workDir != null && lib.hasInfix "{run}" workDir;
 
           # Create namespaces (including bridge namespaces)
           nsCreateCommands = map (
@@ -756,7 +762,7 @@
                   label = name;
                   scriptPath = "\"$(dirname \"$0\")/../namespaces/${name}/scripts/${toString idx}\"";
                   exec = execNs name;
-                  cdNs = mkCdNs nsCfg;
+                  cdNs = mkCdNs name nsCfg;
                   inherit scriptCfg;
                 }) nsCfg.scripts
               ) namespaces
@@ -878,10 +884,10 @@
                   fi
                   _RUN_NUM=''${_START:-0}
                   _WORK_DIR_TPL='${workDir}'
-                  _WORK_DIR="''${_WORK_DIR_TPL//\{\}/$(printf "%02d" "$_RUN_NUM")}"
+                  _WORK_DIR="''${_WORK_DIR_TPL//\{run\}/$(printf "%02d" "$_RUN_NUM")}"
                   while [ -z "''${1:-}" ] && [ -e "$_WORK_DIR" ]; do
                     _RUN_NUM=$((_RUN_NUM+1))
-                    _WORK_DIR="''${_WORK_DIR_TPL//\{\}/$(printf "%02d" "$_RUN_NUM")}"
+                    _WORK_DIR="''${_WORK_DIR_TPL//\{run\}/$(printf "%02d" "$_RUN_NUM")}"
                   done
                 ''
               else
@@ -898,6 +904,7 @@
             ${lib.optionalString (workDir != null) ''
               mkdir -p "$_WORK_DIR"
               cd "$_WORK_DIR"
+              echo "testbed| pwd: $(pwd)"
             ''}
 
             ${setupPhaseSections}
@@ -951,9 +958,7 @@
           + ''
             cp ${pkgs.writeScript name scriptText} $out/bin/${name}
             chmod +x $out/bin/${name}
-            wrap $out/bin/${name} "${
-              lib.makeBinPath (runtimeDeps ++ tb.packages)
-            }" --testbed${lib.optionalString tb.sharePath " --share-path"}${lib.optionalString tb.shareEnv " --share-env"}${lib.optionalString tb.shareMount " --share-mount"}${lib.optionalString tb.shareWayland " --share-wayland"}${lib.optionalString tb.sharePid " --share-pid"}${
+            wrap $out/bin/${name} "${lib.makeBinPath tb.testbedPackages}" --testbed${lib.optionalString tb.sharePath " --share-path"}${lib.optionalString tb.shareEnv " --share-env"}${lib.optionalString tb.shareMount " --share-mount"}${lib.optionalString tb.shareWayland " --share-wayland"}${lib.optionalString tb.sharePid " --share-pid"}${
               lib.optionalString (tb.workDir != null) " --bind-pwd"
             }
           '';
@@ -1047,19 +1052,20 @@
 
           legacyPackages =
             let
+              baseModule = {
+                options = mkTestbedOptions pkgs;
+              };
               evalConfig =
                 networkConfig:
                 lib.evalModules {
                   modules = [
-                    {
-                      options = mkTestbedOptions pkgs;
-                      config = networkConfig;
-                    }
+                    baseModule
+                    networkConfig
                   ];
                 };
             in
             {
-              options = (lib.evalModules { modules = [ { options = mkTestbedOptions pkgs; } ]; }).options;
+              options = (lib.evalModules { modules = [ baseModule ]; }).options;
               mkTestbed = networkConfig: buildTestbed pkgs (evalConfig networkConfig).config;
               mkMermaid = networkConfig: buildMermaid pkgs (evalConfig networkConfig).config;
             };
