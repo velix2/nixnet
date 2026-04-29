@@ -16,8 +16,6 @@
         { inputs', pkgs, ... }:
         let
           config = {
-            workDir = "./out/{}";
-            workDirEnsureEmpty = true;
             arp = false;
             arpPrefill = true;
             namespaces = {
@@ -28,11 +26,9 @@
                     prefixLength = 24;
                   }
                 ];
+                packages = with pkgs; [ iputils ];
                 scripts = [
                   {
-                    packages = with pkgs; [
-                      iputils
-                    ];
                     exec = "ping -c 5 10.0.0.2 > ./stdout 2>&1";
                     await = true;
                   }

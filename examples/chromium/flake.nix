@@ -21,11 +21,13 @@
         in
         {
           packages.default = inputs'.nixnet.legacyPackages.mkTestbed {
+            workDir = null;
             shareWayland = true;
             arp = false;
             arpPrefill = true;
             namespaces = {
               client = {
+                packages = with pkgs; [ chromium ];
                 networking.interfaces.veth0.ipv4 = {
                   addresses = [
                     {
@@ -36,9 +38,6 @@
                 };
                 scripts = [
                   {
-                    packages = with pkgs; [
-                      chromium
-                    ];
                     shareWayland = true;
                     exec = ''
                       FONTCONFIG_FILE=${fontsConf} chromium \
@@ -53,6 +52,7 @@
                 ];
               };
               server = {
+                packages = with pkgs; [ nginx ];
                 networking.interfaces.veth0.ipv4 = {
                   addresses = [
                     {
@@ -63,9 +63,6 @@
                 };
                 scripts = [
                   {
-                    packages = with pkgs; [
-                      nginx
-                    ];
                     exec = ''
                       mkdir -p /tmp/nginx/www /tmp/nginx/logs
                       echo 'hello from nixnet' > /tmp/nginx/www/index.html

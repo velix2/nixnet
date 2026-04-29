@@ -18,22 +18,11 @@
         { pkgs, inputs', ... }:
         {
           packages.default = inputs'.nixnet.legacyPackages.mkTestbed {
-            workDir = "./out/{}";
-            workDirEnsureEmpty = true;
             arp = false;
             arpPrefill = true;
-            packages = with pkgs; [
-              coreutils
-            ];
-            namespaces =
-              let
-                packages = [
-                  inputs'.quiche_perf.packages.default
-                ];
-              in
-              {
+            namespacePackages = with pkgs; [ inputs'.quiche_perf.packages.default coreutils ];
+            namespaces = {
                 client = {
-                  inherit packages;
                   networking.interfaces.veth0.ipv4 = {
                     addresses = [
                       {
@@ -51,7 +40,6 @@
                   workDir = "./client";
                 };
                 server = {
-                  inherit packages;
                   networking.interfaces.veth0.ipv4 = {
                     addresses = [
                       {

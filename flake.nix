@@ -792,6 +792,7 @@
                 ]
                 ++ lib.optional (cdNs != "") "  ${cdNs}"
                 ++ [
+                  "  set -o pipefail"
                   "  stdbuf -oL ${exec}${scriptPath} 2>&1 | sed 's/^/${label}| /'"
                   ") &"
                   "echo \"${label}| PID $! started\""
@@ -834,10 +835,15 @@
               (mkBashSection "launch foreground scripts" fgScripts)
               (lib.strings.trim ''
                 # wait for background processes marked as await
+                _FAILED=0
                 for PID in "''${WAIT_PIDS[@]}"; do
-                  wait "$PID" || true
-                  echo "testbed| PID $PID ended"
+                  _EXIT=0
+                  wait "$PID" || _EXIT=$?
+                  echo "testbed| PID $PID exited with $_EXIT"
+                  [ "$_EXIT" -eq 0 ] || _FAILED=1
+                  PIDS=("''${PIDS[@]/$PID}")
                 done
+                [ "$_FAILED" -eq 0 ] || exit 1
               '')
               (mkBashSection "post-run hook" [ tb.postRun ])
             ]
@@ -855,18 +861,27 @@
             NETNS=()
 
             cleanup() {
+              _FAILED=$?
               echo "testbed| cleaning up..."
               for PID in "''${PIDS[@]}"; do
-                [ -e "/proc/$PID" ] || continue
-                if kill -INT -- -"$PID" 2>/dev/null; then
-                  echo "testbed| PID $PID killed"
+                [ -n "$PID" ] || continue
+                if [ -e "/proc/$PID" ]; then
+                  if kill -INT -- -"$PID" 2>/dev/null; then
+                    echo "testbed| PID $PID killed"
+                  fi
+                  wait "$PID" || true
+                else
+                  _EXIT=0
+                  wait "$PID" || _EXIT=$?
+                  echo "testbed| PID $PID exited with $_EXIT"
+                  [ "$_EXIT" -eq 0 ] || _FAILED=1
                 fi
               done
-              wait
               for NS in "''${NETNS[@]}"; do
                 ip netns del "$NS" || true
                 echo "testbed| netns del $NS"
               done
+              exit "$_FAILED"
             }
             trap cleanup EXIT
 

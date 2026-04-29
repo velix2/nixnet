@@ -16,12 +16,11 @@
         { inputs', pkgs, ... }:
         let
           config = {
-            workDir = "./out/{}";
-            workDirEnsureEmpty = true;
             arp = false;
             arpPrefill = true;
             namespaces = {
               client = {
+                packages = with pkgs; [ iputils ];
                 networking.interfaces = {
                   eth1.ipv4 = {
                     addresses = [
@@ -58,9 +57,6 @@
                 };
                 scripts = [
                   {
-                    packages = with pkgs; [
-                      iputils
-                    ];
                     exec = ''
                       ip route show >> ./stdout 2>&1
                       ping -I eth1 -c 3 10.0.3.2 >> ./stdout 2>&1

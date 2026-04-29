@@ -14,17 +14,11 @@
       ];
       perSystem =
         { pkgs, inputs', ... }:
-        let
-          packages = with pkgs; [
-            iperf3
-            tcpdump
-          ];
-        in
         {
           packages.default = inputs'.nixnet.legacyPackages.mkTestbed {
-            workDir = "out";
-            arp = false;
-            arpPrefill = true;
+              arp = false;
+              arpPrefill = true;
+              namespacePackages = with pkgs; [ iperf3 tcpdump coreutils ];
             namespaces = {
               client = {
                 workDir = "client";
@@ -38,7 +32,7 @@
                 };
                 scripts = [
                   {
-                    inherit packages;
+
                     exec = ''
                       tcpdump -i veth0 -w iperf.cap &
                       TD_PID=$!
@@ -66,7 +60,7 @@
                 };
                 scripts = [
                   {
-                    inherit packages;
+
                     exec = ''
                       tcpdump -i veth0 -w iperf.cap &
                       TD_PID=$!

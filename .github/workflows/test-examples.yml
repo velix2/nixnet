@@ -1,0 +1,30 @@
+name: Test Examples
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - example: ping
+          - example: iperf
+          - example: tcpdump
+          - example: ebpf
+            sudo: true
+          - example: quiche_perf
+          - example: route_metric
+          #- example: chromium # requires display
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - name: Configure kernel
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Run ${{ matrix.example }}
+        run: ${{ matrix.sudo && 'sudo $(which nix)' || 'nix' }} run ./examples/${{ matrix.example }} --override-input nixnet path:.

@@ -15,12 +15,10 @@
       perSystem =
         { pkgs, inputs', ... }:
         let
-          packages = with pkgs; [ iperf3 ];
           config = {
-            workDir = "./out/{}";
-            workDirEnsureEmpty = true;
             arp = false;
             arpPrefill = true;
+            namespacePackages = with pkgs; [ iperf3 coreutils ];
             namespaces = {
               ns-client = {
                 networking.interfaces.veth0.ipv4 = {
@@ -40,7 +38,6 @@
                 };
                 scripts = [
                   {
-                    inherit packages;
                     exec = ''
                       sleep 0.1
                       iperf3 -c 10.0.1.2 > ./stdout 2>&1
@@ -85,7 +82,6 @@
                 };
                 scripts = [
                   {
-                    inherit packages;
                     exec = "iperf3 -s > ./stdout 2>&1";
                   }
                 ];
