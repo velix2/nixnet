@@ -8,23 +8,26 @@ on:
 
 jobs:
   run:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - example: ping
-          - example: iperf
-          - example: tcpdump
-          - example: ebpf
+        runner:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+        example:
+          - name: ping
+          - name: iperf
+          - name: tcpdump
+          - name: ebpf
             sudo: true
-          - example: quiche_perf
-          - example: route_metric
-          #- example: chromium # requires display
+          - name: quiche_perf
+          - name: route_metric
+          #- name: chromium # requires display
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
       - name: Configure kernel
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Run ${{ matrix.example }}
-        run: ${{ matrix.sudo && 'sudo $(which nix)' || 'nix' }} run ./examples/${{ matrix.example }} --override-input nixnet path:.
+      - name: Run ${{ matrix.example.name }}
+        run: ${{ matrix.example.sudo && 'sudo $(which nix)' || 'nix' }} run ./examples/${{ matrix.example.name }} --override-input nixnet path:.
