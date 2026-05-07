@@ -16,11 +16,10 @@
       perSystem =
         { pkgs, inputs', ... }:
         let
+          nixnet = inputs'.nixnet.legacyPackages;
           certs = inputs'.test-certs.packages.default;
           fontsConf = pkgs.makeFontsConf { fontDirectories = with pkgs; [ noto-fonts ]; };
-        in
-        {
-          packages.default = inputs'.nixnet.legacyPackages.mkTestbed {
+          config = {
             workDir = null;
             shareWayland = true;
             arp = false;
@@ -102,6 +101,11 @@
               }
             ];
           };
+        in
+        {
+          packages.default = nixnet.mkTestbed config;
+          packages.mermaid = nixnet.mkMermaid config;
+          packages.mermaid-svg = nixnet.mkMermaidSvg config;
         };
     };
 }

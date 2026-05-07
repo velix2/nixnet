@@ -16,8 +16,9 @@
       ];
       perSystem =
         { pkgs, inputs', ... }:
-        {
-          packages.default = inputs'.nixnet.legacyPackages.mkTestbed {
+        let
+          nixnet = inputs'.nixnet.legacyPackages;
+          config = {
             arp = false;
             arpPrefill = true;
             namespacePackages = with pkgs; [ inputs'.quiche_perf.packages.default coreutils ];
@@ -77,6 +78,11 @@
               }
             ];
           };
+        in
+        {
+          packages.default = nixnet.mkTestbed config;
+          packages.mermaid = nixnet.mkMermaid config;
+          packages.mermaid-svg = nixnet.mkMermaidSvg config;
         };
     };
 }

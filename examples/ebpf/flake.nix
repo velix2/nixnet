@@ -17,9 +17,7 @@
         let
           nixnet = inputs'.nixnet.legacyPackages;
           starlink = inputs'.starlink.packages.default;
-        in
-        {
-          packages.default = nixnet.mkTestbed {
+          config = {
             namespacePackages = with pkgs; [
               iperf3
               coreutils
@@ -69,6 +67,11 @@
               }
             ];
           };
+        in
+        {
+          packages.default = nixnet.mkTestbed config;
+          packages.mermaid = nixnet.mkMermaid config;
+          packages.mermaid-svg = nixnet.mkMermaidSvg config;
         };
     };
 }

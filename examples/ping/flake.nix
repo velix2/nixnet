@@ -15,6 +15,7 @@
       perSystem =
         { inputs', pkgs, ... }:
         let
+          nixnet = inputs'.nixnet.legacyPackages;
           config = {
             arp = false;
             arpPrefill = true;
@@ -60,8 +61,9 @@
           };
         in
         {
-          packages.default = inputs'.nixnet.legacyPackages.mkTestbed config;
-          legacyPackages.mermaid = inputs'.nixnet.legacyPackages.mkMermaid config;
+          packages.default = nixnet.mkTestbed config;
+          packages.mermaid = nixnet.mkMermaid config;
+          packages.mermaid-svg = nixnet.mkMermaidSvg config;
         };
     };
 }

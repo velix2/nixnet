@@ -14,8 +14,9 @@
       ];
       perSystem =
         { pkgs, inputs', ... }:
-        {
-          packages.default = inputs'.nixnet.legacyPackages.mkTestbed {
+        let
+          nixnet = inputs'.nixnet.legacyPackages;
+          config = {
             workDir = null;
             testbedPackages =
               with pkgs;
@@ -81,6 +82,11 @@
               }
             ];
           };
+        in
+        {
+          packages.default = nixnet.mkTestbed config;
+          packages.mermaid = nixnet.mkMermaid config;
+          packages.mermaid-svg = nixnet.mkMermaidSvg config;
         };
     };
 }

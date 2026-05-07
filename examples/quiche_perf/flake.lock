@@ -78,11 +78,11 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1777459210,
-        "narHash": "sha256-liGsSx25icdLLgZKyhbz2a4QroYqIcE02z9zLDsoL1w=",
+        "lastModified": 1778158907,
+        "narHash": "sha256-EukbGcOSYgecPyCv76fth1jW9V28DSg4bakJqXKf6wk=",
         "owner": "birneee",
         "repo": "nixnet",
-        "rev": "bb86ade2d46adcadefdef30c72d7d314905e5fc9",
+        "rev": "81a3310dc746b602b93438abab76be68d8865f2f",
         "type": "github"
       },
       "original": {
