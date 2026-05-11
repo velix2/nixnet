@@ -2,6 +2,13 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
+    jail = {
+      url = "path:./jail";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-parts.follows = "flake-parts";
+      };
+    };
   };
 
   outputs =
@@ -75,31 +82,6 @@
                             default = false;
                             description = "Run this script in the foreground without output redirection. Runs after all background scripts are started. Use for interactive shells or tools that require a terminal.";
                           };
-                          sharePath = lib.mkOption {
-                            type = lib.types.bool;
-                            default = false;
-                            description = "Inherit PATH from the testbed. If the testbed inherits PATH from the host, host tools become available.";
-                          };
-                          shareEnv = lib.mkOption {
-                            type = lib.types.bool;
-                            default = false;
-                            description = "Inherit environment variables from the testbed. If the testbed inherits environment variables from the host, host environment becomes available.";
-                          };
-                          shareMount = lib.mkOption {
-                            type = lib.types.bool;
-                            default = false;
-                            description = "Share the filesystem with the testbed. If the testbed shares the host filesystem, host files become accessible.";
-                          };
-                          shareWayland = lib.mkOption {
-                            type = lib.types.bool;
-                            default = false;
-                            description = "Bind the Wayland display socket and graphics devices into the sandbox, enabling GUI applications.";
-                          };
-                          sharePid = lib.mkOption {
-                            type = lib.types.bool;
-                            default = false;
-                            description = "Share the PID namespace with the testbed.";
-                          };
                         };
                       }
                     );
@@ -121,6 +103,16 @@
                     type = lib.types.str;
                     default = "";
                     description = "Shell code to run inside this namespace before testbed postSetup. Runs as root.";
+                  };
+                  shareWayland = lib.mkOption {
+                    type = lib.types.bool;
+                    default = false;
+                    description = "Bind the Wayland display socket and graphics devices into the sandbox, enabling GUI applications.";
+                  };
+                  bind = lib.mkOption {
+                    type = lib.types.listOf lib.types.str;
+                    default = [ ];
+                    description = "List of host paths to bind-mount into the sandbox at `/bind/<path>`.";
                   };
                 };
               }
@@ -234,30 +226,15 @@
           sysctl = nixosSysctlOption // {
             description = nixosSysctlOption.description + " Can be overridden per namespace.";
           };
-          sharePath = lib.mkOption {
-            type = lib.types.bool;
-            default = false;
-            description = "Prepend the system PATH. Useful for accessing host tools not managed by Nix. If the tool is not in the Nix store, shareMount may also be required.";
-          };
-          shareEnv = lib.mkOption {
-            type = lib.types.bool;
-            default = false;
-            description = "Inherit all environment variables from the calling environment. PATH is still controlled separately by sharePath.";
-          };
-          shareMount = lib.mkOption {
-            type = lib.types.bool;
-            default = false;
-            description = "Bind the host filesystem into the sandbox.";
-          };
           shareWayland = lib.mkOption {
             type = lib.types.bool;
             default = false;
             description = "Bind the Wayland display socket and graphics devices into the sandbox, enabling GUI applications.";
           };
-          sharePid = lib.mkOption {
-            type = lib.types.bool;
-            default = false;
-            description = "Share the PID namespace with the host.";
+          bind = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+            description = "List of host paths to bind-mount into the testbed sandbox at `/bind/<path>`.";
           };
           preSetup = lib.mkOption {
             type = lib.types.str;
@@ -335,10 +312,9 @@
           ) template;
 
       buildTestbed =
-        pkgs: tb:
+        pkgs: jail_pkg: tb:
         let
           lib = pkgs.lib;
-          wrap = import ./wrap.nix pkgs;
           writeRunJson =
             (pkgs.writeShellApplication {
               name = "write_run_json";
@@ -349,7 +325,7 @@
                 findutils
                 inetutils
               ];
-              text = builtins.readFile ./write_run_json.sh;
+              text = builtins.readFile ./src/write_run_json;
             }).outPath
             + "/bin/write_run_json";
           namespaces = tb.namespaces;
@@ -372,8 +348,6 @@
               namespaces.${node.ns}.networking.interfaces.${node.iface}
             else
               null;
-
-          execNs = ns: lib.optionalString (ns != null) "ip netns exec ${ns} ";
 
           # Join non-empty strings with newlines.
           concatNonEmpty = strs: lib.concatStringsSep "\n" (lib.filter (s: s != "") strs);
@@ -405,9 +379,6 @@
               (veth.a.ns == ns && veth.a.iface == ifaceName) || (veth.b.ns == ns && veth.b.iface == ifaceName)
             ) veths;
 
-          # Compute the PATH for a script
-          mkScriptPkgs = nsCfg: _scriptCfg: nsCfg.packages ++ tb.namespacePackages;
-
           # Write a script entry to a store path, preserving Nix string context.
           mkScriptFile =
             nsName: idx: scriptCfg:
@@ -424,41 +395,53 @@
           # Pre-computed script files for top-level testbed scripts: [file0, file1, ...]
           tbScriptFiles = lib.imap0 (idx: scriptCfg: mkScriptFile "testbed" idx scriptCfg) tb.scripts;
 
-          # cd into the namespace workDir, creating it as the original user if needed.
-          mkCdNs =
-            nsName: nsCfg:
-            let
-              dir = builtins.replaceStrings [ "{namespace}" ] [ nsName ] nsCfg.workDir;
-            in
-            lib.optionalString (nsCfg.workDir != null) "mkdir -p '${dir}'\n  cd '${dir}'";
-
           # {run} in workDir enables repeated-run mode: the script accepts N as $1
           # and loops N times, substituting {run} with a zero-padded index each run.
           hasTemplate = workDir != null && lib.hasInfix "{run}" workDir;
 
+          mkPathLines = pkgs: lib.concatMapStringsSep "\n" (pkg: ''_PATH="${pkg}/bin:$_PATH"'') pkgs;
+
           # Create namespaces (including bridge namespaces)
-          nsCreateCommands = map (
-            name:
-            lib.concatStringsSep "\n" [
-              "ip netns add ${name}"
-              "NETNS+=(${name})"
-            ]
-          ) (lib.attrNames namespaces ++ tb.bridges);
+          nsCreateCommands =
+            map (
+              name:
+              let
+                nsCfg = namespaces.${name} or null;
+                dir = lib.optionalString (nsCfg != null && nsCfg.workDir != null) (
+                  builtins.replaceStrings [ "{namespace}" ] [ name ] nsCfg.workDir
+                );
+                nsPkgs = (nsCfg.packages or [ ]) ++ tb.namespacePackages;
+                nsPathLines = mkPathLines nsPkgs;
+                wayland = lib.optionalString (nsCfg != null && (nsCfg.shareWayland or false)) " \\\n  --wayland";
+                binds = lib.concatMapStrings (p: " \\\n  --bind '${p}' '/bind${p}'") (nsCfg.bind or [ ]);
+              in
+              lib.concatStringsSep "\n" (
+                [ "_PATH=\"\" # clear path" ]
+                ++ [ nsPathLines ]
+                ++ lib.optional (dir != "") "mkdir -p '${dir}'"
+                ++ [
+                  "jail add \\\n  --setenv PATH=$_PATH${
+                    lib.optionalString (dir != "") " \\\n  --bind '${dir}' /pwd \\\n  --chdir /pwd"
+                  }${wayland}${binds} \\\n  ${name}"
+                ]
+              )
+            ) (lib.attrNames namespaces)
+            ++ map (name: "jail add ${name}") tb.bridges;
 
           # Bring loopback interfaces up
-          nsLoUpCommands = lib.mapAttrsToList (name: _: "${execNs name}ip link set lo up") namespaces;
+          nsLoUpCommands = lib.mapAttrsToList (name: _: "ip netns exec ${name} ip link set lo up") namespaces;
 
           nsPreSetupCommands = lib.mapAttrsToList (
             name: nsCfg:
             lib.optionalString (nsCfg.preSetup != "") ''
-              ${execNs name}bash -c ${lib.escapeShellArg nsCfg.preSetup}
+              ip netns exec ${name} bash -c ${lib.escapeShellArg nsCfg.preSetup}
             ''
           ) namespaces;
 
           nsPostSetupCommands = lib.mapAttrsToList (
             name: nsCfg:
             lib.optionalString (nsCfg.postSetup != "") ''
-              ${execNs name}bash -c ${lib.escapeShellArg nsCfg.postSetup}
+              ip netns exec ${name} bash -c ${lib.escapeShellArg nsCfg.postSetup}
             ''
           ) namespaces;
 
@@ -487,7 +470,7 @@
                       else
                         toString value;
                   in
-                  "${execNs name}sysctl -w ${key}=${rendered} > /dev/null"
+                  "ip netns exec ${name} sysctl -w ${key}=${rendered} > /dev/null"
                 )
               ) merged
             ) namespaces
@@ -525,13 +508,13 @@
                   ]
                 );
               in
-              "${execNs ns}tc qdisc add dev ${dev} root netem ${params}"
+              "ip netns exec ${ns} tc qdisc add dev ${dev} root netem ${params}"
             );
 
           # Create veth pairs
           vethCreateCommands = map (
             veth:
-            "${execNs veth.a.ns}ip link add ${veth.a.iface} type veth peer name ${veth.b.iface} netns ${veth.b.ns}"
+            "ip netns exec ${veth.a.ns} ip link add ${veth.a.iface} type veth peer name ${veth.b.iface} netns ${veth.b.ns}"
           ) veths;
 
           # All {nsName, ifaceName} pairs from networking.interfaces that are not a veth endpoint.
@@ -546,7 +529,7 @@
 
           # Create dummy interfaces for networking.interfaces entries that have no veth endpoint
           dummyCreateCommands = map (
-            { nsName, ifaceName }: "${execNs nsName}ip link add ${ifaceName} type dummy"
+            { nsName, ifaceName }: "ip netns exec ${nsName} ip link add ${ifaceName} type dummy"
           ) dummyIfaces;
 
           # Collect {ns, iface, addr} for all addresses of a given IP version.
@@ -579,7 +562,7 @@
                 iface,
                 addr,
               }:
-              "${execNs ns}${ipCmd} addr add ${addr} dev ${iface}"
+              "ip netns exec ${ns} ${ipCmd} addr add ${addr} dev ${iface}"
             ) addrs;
 
           # Assign IPv4/IPv6 addresses
@@ -587,17 +570,17 @@
           ipv6AddrCommands = mkAddrCommands "ip -6" ipv6Addrs;
 
           # Bring veth interfaces up
-          linkIfUpCommands = mkVethPairCmds (node: "${execNs node.ns}ip link set ${node.iface} up");
+          linkIfUpCommands = mkVethPairCmds (node: "ip netns exec ${node.ns} ip link set ${node.iface} up");
 
           # Bring dummy interfaces up
           dummyIfUpCommands = map (
-            { nsName, ifaceName }: "${execNs nsName}ip link set ${ifaceName} up"
+            { nsName, ifaceName }: "ip netns exec ${nsName} ip link set ${ifaceName} up"
           ) dummyIfaces;
 
           # Attach veth interfaces to bridge
           linkBridgeCommands = mkVethPairCmds (
             node:
-            lib.optionalString (builtins.elem node.ns tb.bridges) "${execNs node.ns}ip link set ${node.iface} master ${node.ns}"
+            lib.optionalString (builtins.elem node.ns tb.bridges) "ip netns exec ${node.ns} ip link set ${node.iface} master ${node.ns}"
           );
 
           # Configure MTU for all interfaces from networking.interfaces
@@ -614,7 +597,9 @@
                     tb
                   ];
                 in
-                lib.optionalString (mtu != null) "${execNs nsName}ip link set ${ifaceName} mtu ${toString mtu}"
+                lib.optionalString (
+                  mtu != null
+                ) "ip netns exec ${nsName} ip link set ${ifaceName} mtu ${toString mtu}"
               ) nsCfg.networking.interfaces
             ) namespaces
           );
@@ -635,8 +620,8 @@
               ];
             in
             concatNonEmpty [
-              (lib.optionalString (!arpA) "${execNs veth.a.ns}ip link set ${veth.a.iface} arp off")
-              (lib.optionalString (!arpB) "${execNs veth.b.ns}ip link set ${veth.b.iface} arp off")
+              (lib.optionalString (!arpA) "ip netns exec ${veth.a.ns} ip link set ${veth.a.iface} arp off")
+              (lib.optionalString (!arpB) "ip netns exec ${veth.b.ns} ip link set ${veth.b.iface} arp off")
             ]
           ) veths;
 
@@ -675,8 +660,8 @@
                 veth
                 tb
               ];
-              nsA = execNs veth.a.ns;
-              nsB = execNs veth.b.ns;
+              nsA = "ip netns exec ${veth.a.ns} ";
+              nsB = "ip netns exec ${veth.b.ns} ";
               getIpv4s = node: (getNsIface node).ipv4.addresses or [ ];
               # Get MAC from peer once, then add a neigh entry for each of its IPv4 addresses.
               mkPrefill =
@@ -705,7 +690,7 @@
               in
               concatNonEmpty (
                 lib.optional (gw != null) (
-                  "${execNs name}${ipCmd} route add default via ${gw.address}"
+                  "ip netns exec ${name} ${ipCmd} route add default via ${gw.address}"
                   + lib.optionalString (gw.interface != null) " dev ${gw.interface}"
                   + lib.optionalString (gw.source != null) " src ${gw.source}"
                   + lib.optionalString (gw.metric != null) " metric ${toString gw.metric}"
@@ -715,7 +700,7 @@
                     ifaceName: ifaceCfg:
                     map (
                       route:
-                      "${execNs name}${ipCmd} route add ${route.address}/${toString route.prefixLength}"
+                      "ip netns exec ${name} ${ipCmd} route add ${route.address}/${toString route.prefixLength}"
                       + lib.optionalString (route.via or null != null) " via ${route.via}"
                       + " dev ${ifaceName}"
                       + lib.concatStringsSep "" (lib.mapAttrsToList (k: v: " ${k} ${v}") (route.options or { }))
@@ -735,11 +720,11 @@
 
           # Create bridge devices inside their namespaces.
           bridgeAddCommands = map (
-            brName: "${execNs brName}ip link add ${brName} type bridge stp_state 0"
+            brName: "ip netns exec ${brName} ip link add ${brName} type bridge stp_state 0"
           ) tb.bridges;
 
           # Set bridges to up
-          bridgeUpCommands = map (brName: "${execNs brName}ip link set ${brName} up") tb.bridges;
+          bridgeUpCommands = map (brName: "ip netns exec ${brName} ip link set ${brName} up") tb.bridges;
 
           setupPhaseSections = lib.concatStringsSep "\n\n" (
             lib.filter (s: s != "") [
@@ -766,7 +751,7 @@
             ]
           );
 
-          # All scripts as a flat list of { label, scriptPath, exec, cdNs, scriptCfg }
+          # All scripts as a flat list of { label, scriptPath, exec, scriptCfg }
           allScripts =
             lib.concatLists (
               lib.mapAttrsToList (
@@ -774,8 +759,7 @@
                 lib.imap0 (idx: scriptCfg: {
                   label = name;
                   scriptPath = "\"$(dirname \"$0\")/../namespaces/${name}/scripts/${toString idx}\"";
-                  exec = execNs name;
-                  cdNs = mkCdNs name nsCfg;
+                  exec = "jail enter ${name} ";
                   inherit scriptCfg;
                 }) nsCfg.scripts
               ) namespaces
@@ -784,7 +768,6 @@
               label = "testbed";
               scriptPath = "\"$(dirname \"$0\")/../scripts/${toString idx}\"";
               exec = "";
-              cdNs = "";
               inherit scriptCfg;
             }) tb.scripts;
 
@@ -794,7 +777,6 @@
               label,
               scriptPath,
               exec,
-              cdNs,
               scriptCfg,
             }:
             lib.optional (!scriptCfg.foreground) (
@@ -802,9 +784,6 @@
                 [
                   "("
                   "  set +m"
-                ]
-                ++ lib.optional (cdNs != "") "  ${cdNs}"
-                ++ [
                   "  set -o pipefail"
                   "  stdbuf -oL ${exec}${scriptPath} 2>&1 | sed 's/^/${label}| /'"
                   ") &"
@@ -822,23 +801,15 @@
               label,
               scriptPath,
               exec,
-              cdNs,
               scriptCfg,
             }:
-            lib.optional scriptCfg.foreground (
-              concatNonEmpty (
-                [
-                  "echo \"${label}| start foreground script\""
-                  "("
-                ]
-                ++ lib.optional (cdNs != "") "  ${cdNs}"
-                ++ [
-                  "  ${exec}${scriptPath}"
-                  ")"
-                  "echo \"${label}| end foreground script\""
-                ]
-              )
-            )
+            lib.optional scriptCfg.foreground (concatNonEmpty [
+              "echo \"${label}| start foreground script\""
+              "("
+              "  ${exec}${scriptPath}"
+              ")"
+              "echo \"${label}| end foreground script\""
+            ])
           ) allScripts;
 
           runPhaseSections = lib.concatStringsSep "\n\n" (
@@ -871,7 +842,6 @@
 
             PIDS=()
             WAIT_PIDS=()
-            NETNS=()
 
             cleanup() {
               _FAILED=$?
@@ -890,49 +860,17 @@
                   [ "$_EXIT" -eq 0 ] || _FAILED=1
                 fi
               done
-              for NS in "''${NETNS[@]}"; do
-                ip netns del "$NS" || true
-                echo "testbed| netns del $NS"
-              done
               exit "$_FAILED"
             }
             trap cleanup EXIT
 
-            ${
-              if hasTemplate then
-                ''
-                  # Accept a single run index (e.g. 3) or a range (e.g. 1-5).
-                  # If no argument is given, find the next free index.
-                  IFS='-' read -r _START _END <<< "''${1:-}"
-                  if [ -n "$_END" ]; then
-                    for _RUN_NUM in $(seq "$_START" "$_END"); do
-                      "$0" "$_RUN_NUM" || true
-                    done
-                    exit 0
-                  fi
-                  _RUN_NUM=''${_START:-0}
-                  _WORK_DIR_TPL='${workDir}'
-                  _WORK_DIR="''${_WORK_DIR_TPL//\{run\}/$(printf "%02d" "$_RUN_NUM")}"
-                  while [ -z "''${1:-}" ] && [ -e "$_WORK_DIR" ]; do
-                    _RUN_NUM=$((_RUN_NUM+1))
-                    _WORK_DIR="''${_WORK_DIR_TPL//\{run\}/$(printf "%02d" "$_RUN_NUM")}"
-                  done
-                ''
-              else
-                lib.optionalString (workDir != null) ''
-                  _WORK_DIR='${workDir}'
-                ''
-            }
             ${lib.optionalString (workDir != null && workDirEnsureEmpty) ''
-              if [ -d "$_WORK_DIR" ] && [ -n "$(ls -A "$_WORK_DIR" 2>/dev/null)" ]; then
-                echo "testbed| Error: workDir is not empty: $_WORK_DIR"
+              if [ -n "$(ls -A . 2>/dev/null)" ]; then
+                echo "testbed| Error: workDir is not empty: $(pwd)"
                 exit 1
               fi
             ''}
             ${lib.optionalString (workDir != null) ''
-              mkdir -p "$_WORK_DIR"
-              cd "$_WORK_DIR"
-              echo "testbed| pwd: $(pwd)"
               _STORE_PATH="$(dirname "$(dirname "$0")")"
               ${writeRunJson} "$_STORE_PATH"
             ''}
@@ -948,7 +886,7 @@
           version = "0";
           dontUnpack = true;
           strictDeps = true;
-          nativeBuildInputs = [ wrap ];
+          nativeBuildInputs = [ ];
           installPhase = ''
             mkdir -p $out/bin
           ''
@@ -957,17 +895,13 @@
               nsName: nsCfg:
               lib.concatStrings (
                 lib.imap0 (
-                  idx: scriptCfg:
+                  idx: _scriptCfg:
                   let
                     scriptFile = builtins.elemAt nsScriptFiles.${nsName} idx;
-                    scriptPath = lib.makeBinPath (mkScriptPkgs nsCfg scriptCfg);
                   in
                   ''
                     mkdir -p $out/namespaces/${nsName}/scripts
                     install -m 0755 ${scriptFile} $out/namespaces/${nsName}/scripts/${toString idx}
-                    wrap $out/namespaces/${nsName}/scripts/${toString idx} "${scriptPath}"${lib.optionalString scriptCfg.sharePath " --share-path"}${lib.optionalString scriptCfg.shareEnv " --share-env"}${lib.optionalString scriptCfg.shareMount " --share-mount"}${lib.optionalString scriptCfg.shareWayland " --share-wayland"}${lib.optionalString scriptCfg.sharePid " --share-pid"}${
-                      lib.optionalString (nsCfg.workDir != null) " --bind-pwd"
-                    }
                   ''
                 ) nsCfg.scripts
               )
@@ -975,7 +909,7 @@
           )
           + lib.concatStrings (
             lib.imap0 (
-              idx: scriptCfg:
+              idx: _scriptCfg:
               let
                 scriptFile = builtins.elemAt tbScriptFiles idx;
               in
@@ -985,13 +919,59 @@
               ''
             ) tb.scripts
           )
-          + ''
-            cp ${pkgs.writeScript name scriptText} $out/bin/${name}
-            chmod +x $out/bin/${name}
-            wrap $out/bin/${name} "${lib.makeBinPath tb.testbedPackages}" --testbed${lib.optionalString tb.sharePath " --share-path"}${lib.optionalString tb.shareEnv " --share-env"}${lib.optionalString tb.shareMount " --share-mount"}${lib.optionalString tb.shareWayland " --share-wayland"}${lib.optionalString tb.sharePid " --share-pid"}${
-              lib.optionalString (tb.workDir != null) " --bind-pwd"
-            }
-          '';
+          + (
+            let
+              jailFlags =
+                [ ''--setenv "PATH=$PATH"'' ]
+                ++ lib.optional tb.shareWayland "--wayland"
+                ++ map (p: "--bind '${p}' '/bind${p}'") tb.bind
+                ++ lib.optionals (workDir != null) [
+                  ''--bind "$_WORK_DIR" /pwd''
+                  "--chdir /pwd"
+                ];
+            in
+            ''
+              install -m 0755 ${pkgs.writeScript name ''
+                #!${pkgs.bash}/bin/bash
+                set -euo pipefail
+
+                _PATH="" # clear path
+                ${mkPathLines (tb.testbedPackages ++ [ jail_pkg ])}
+                export PATH="$_PATH"
+
+                ${concatNonEmpty [
+                  (if hasTemplate then
+                    ''
+                      IFS='-' read -r _START _END <<< "''${1:-}"
+                      if [ -n "$_END" ]; then
+                        for _RUN_NUM in $(seq "$_START" "$_END"); do
+                          "$0" "$_RUN_NUM" || true
+                        done
+                        exit 0
+                      fi
+                      _RUN_NUM=''${_START:-0}
+                      _WORK_DIR_TPL='${workDir}'
+                      _WORK_DIR="''${_WORK_DIR_TPL//\{run\}/$(printf "%02d" "$_RUN_NUM")}"
+                      while [ -z "''${1:-}" ] && [ -e "$_WORK_DIR" ]; do
+                        _RUN_NUM=$((_RUN_NUM+1))
+                        _WORK_DIR="''${_WORK_DIR_TPL//\{run\}/$(printf "%02d" "$_RUN_NUM")}"
+                      done
+                    ''
+                  else
+                    lib.optionalString (workDir != null) ''
+                      _WORK_DIR='${workDir}'
+                    '')
+                  (lib.optionalString (workDir != null) ''
+                    mkdir -p "$_WORK_DIR"
+                    echo "testbed| workdir: $(realpath "$_WORK_DIR")"'')
+                ]}
+
+                exec jail exec \
+                  ${lib.concatStringsSep " \\\n  " (jailFlags ++ [ "\"$(dirname \"$0\")/.${name}-wrapped\"" ])}
+              ''} $out/bin/${name}
+              install -m 0755 ${pkgs.writeScript "${name}-wrapped" scriptText} $out/bin/.${name}-wrapped
+            ''
+          );
           meta.mainProgram = name;
         };
       buildMermaid =
@@ -1059,7 +1039,10 @@
       ];
 
       perSystem =
-        { pkgs, lib, ... }:
+        { pkgs, lib, inputs', ... }:
+        let
+          jail_pkg = inputs'.jail.packages.default;
+        in
         {
           packages.nixnet-option-docs =
             let
@@ -1096,8 +1079,9 @@
             in
             rec {
               options = (lib.evalModules { modules = [ baseModule ]; }).options;
-              mkTestbed = networkConfig: buildTestbed pkgs (evalConfig networkConfig).config;
-              mkMermaid = networkConfig: pkgs.writeText "topology.mmd" (buildMermaid pkgs (evalConfig networkConfig).config);
+              mkTestbed = networkConfig: buildTestbed pkgs jail_pkg (evalConfig networkConfig).config;
+              mkMermaid =
+                networkConfig: pkgs.writeText "topology.mmd" (buildMermaid pkgs (evalConfig networkConfig).config);
               mkMermaidSvg =
                 networkConfig:
                 pkgs.runCommand "topology.svg"

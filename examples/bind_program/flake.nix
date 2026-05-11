@@ -17,46 +17,32 @@
         let
           nixnet = inputs'.nixnet.legacyPackages;
           config = {
-            arp = false;
-            arpPrefill = true;
+            bind = [
+              "/bin/sh"
+            ];
             namespaces = {
-              client = {
-                networking.interfaces.veth0.ipv4.addresses = [
-                  {
-                    address = "10.0.0.1";
-                    prefixLength = 24;
-                  }
+              host-sh = {
+                bind = [
+                  "/bind/bin/sh"
                 ];
-                packages = with pkgs; [ iputils ];
                 scripts = [
                   {
-                    exec = "ping -c 5 10.0.0.2 > ./stdout 2>&1";
+                    exec = "/bind/bind/bin/sh --version > ./version.txt 2>&1";
                     await = true;
                   }
                 ];
+                workDir = "./host-sh";
               };
-              server = {
-                networking.interfaces.veth0.ipv4.addresses = [
+              nix-sh = {
+                scripts = [
                   {
-                    address = "10.0.0.2";
-                    prefixLength = 24;
+                    exec = "${pkgs.bash}/bin/sh --version > ./version.txt 2>&1";
+                    await = true;
                   }
                 ];
+                workDir = "./nix-sh";
               };
             };
-            veths = [
-              {
-                netem.delayMs = 50;
-                a = {
-                  ns = "client";
-                  iface = "veth0";
-                };
-                b = {
-                  ns = "server";
-                  iface = "veth0";
-                };
-              }
-            ];
           };
         in
         {

@@ -26,6 +26,7 @@
             arpPrefill = true;
             namespaces = {
               client = {
+                shareWayland = true;
                 packages = with pkgs; [ chromium ];
                 networking.interfaces.veth0.ipv4 = {
                   addresses = [
@@ -37,7 +38,6 @@
                 };
                 scripts = [
                   {
-                    shareWayland = true;
                     exec = ''
                       FONTCONFIG_FILE=${fontsConf} chromium \
                         --origin-to-force-quic-on="*" \

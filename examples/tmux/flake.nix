@@ -55,11 +55,11 @@
                 exec = ''
                   SOCKET=/tmp/nixnet.sock
                   SESSION=nixnet
-                  tmux -S $SOCKET -f ${./tmux.conf} new-session -d -s $SESSION -n "client" -- ip netns exec client bash
-                  tmux -S $SOCKET new-window -t $SESSION -n "server" -- ip netns exec server bash
+                  tmux -S $SOCKET -f ${./tmux.conf} new-session -d -s $SESSION -n "client" -- jail enter client bash
+                  tmux -S $SOCKET new-window -t $SESSION -n "server" -- jail enter server bash
                   MENU_CMD='display-menu -T " New " -x 0 -y S \
-                    "client" a "new-window -n client \"ip netns exec client bash\"" \
-                    "server" b "new-window -n server \"ip netns exec server bash\"" \
+                    "client" a "new-window -n client \"jail enter client bash\"" \
+                    "server" b "new-window -n server \"jail enter server bash\"" \
                     "" \
                     "Exit Lab" q "confirm-before -p \"Exit session? (y/n)\" detach-client"'
                   tmux -S $SOCKET bind-key m "$MENU_CMD"

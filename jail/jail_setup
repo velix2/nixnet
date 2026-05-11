@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Called by jail to set up the sandbox filesystem inside a new mount namespace.
+# Expects exported variables: NAME, CHDIR, WAYLAND, HAS_USERNS, JAIL_BINDS, JAIL_SETENV.
+set -euo pipefail
+NEW_ROOT="$(mktemp -d)"
+mount -t tmpfs tmpfs "$NEW_ROOT"
+mkdir -p "$NEW_ROOT/old_root"
+mkdir -p "$NEW_ROOT/bin"
+ln -s /nix/store/4bwbk4an4bx7cb8xwffghvjjyfyl7m2i-bash-interactive-5.3p9/bin/bash "$NEW_ROOT/bin/sh"
+mkdir -p "$NEW_ROOT/var/run/netns"
+mkdir -p "$NEW_ROOT/nix/store"
+mkdir -p "$NEW_ROOT/proc"
+mkdir -p "$NEW_ROOT/sys"
+mkdir -p "$NEW_ROOT/tmp"
+mkdir -p "$NEW_ROOT/dev"
+mkdir -p "$NEW_ROOT/root"
+mkdir -p "$NEW_ROOT/dev/pts"
+mount -t devpts devpts "$NEW_ROOT/dev/pts" -o newinstance,ptmxmode=0666
+ln -sf /dev/pts/ptmx "$NEW_ROOT/dev/ptmx"
+mkdir -p "$NEW_ROOT/dev/shm"
+chmod 1777 "$NEW_ROOT/dev/shm"
+ln -s /proc/self/fd "$NEW_ROOT/dev/fd"
+ln -s /proc/self/fd/0 "$NEW_ROOT/dev/stdin"
+ln -s /proc/self/fd/1 "$NEW_ROOT/dev/stdout"
+ln -s /proc/self/fd/2 "$NEW_ROOT/dev/stderr"
+touch "$NEW_ROOT/dev/null"
+touch "$NEW_ROOT/dev/zero"
+touch "$NEW_ROOT/dev/urandom"
+touch "$NEW_ROOT/dev/random"
+mount --bind /dev/null "$NEW_ROOT/dev/null"
+mount --bind /dev/zero "$NEW_ROOT/dev/zero"
+mount --bind /dev/urandom "$NEW_ROOT/dev/urandom"
+mount --bind /dev/random "$NEW_ROOT/dev/random"
+mount --rbind /nix/store "$NEW_ROOT/nix/store"
+mount --rbind /sys "$NEW_ROOT/sys" # required otherwise "ip netns exec" fails inside
+mkdir -p "$NEW_ROOT/etc"
+printf "root:x:0:0:root:/root:/bin/sh\n" > "$NEW_ROOT/etc/passwd"
+printf "nobody:x:65534:65534:nobody:/var/empty:/bin/sh\n" >> "$NEW_ROOT/etc/passwd"
+printf "root:x:0:\n" > "$NEW_ROOT/etc/group"
+printf "nobody:x:65534:\n" >> "$NEW_ROOT/etc/group"
+printf "nogroup:x:65534:\n" >> "$NEW_ROOT/etc/group"
+while IFS= read -r _entry; do
+  [ -z "$_entry" ] && continue
+  _mode="${_entry%%:*}"; _rest="${_entry#*:}"
+  _src="${_rest%%:*}"; _dst="${_rest#*:}"
+  if [ -d "$_src" ]; then
+    mkdir -p "$NEW_ROOT$_dst"
+  else
+    mkdir -p "$NEW_ROOT$(dirname "$_dst")"
+    touch "$NEW_ROOT$_dst"
+  fi
+  mount --bind "$_src" "$NEW_ROOT$_dst"
+  if [ "$_mode" = ro ]; then
+    mount -o remount,ro,bind "$NEW_ROOT$_dst"
+  fi
+done <<< "$JAIL_BINDS"
+if [ "$WAYLAND" = true ]; then
+  mkdir -p "$NEW_ROOT/run/user/0"
+  touch "$NEW_ROOT/run/user/0/wayland-0"
+  mount --rbind "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" "$NEW_ROOT/run/user/0/wayland-0"
+  if [ -e /dev/dri ]; then
+    mkdir -p "$NEW_ROOT/dev/dri"
+    mount --bind /dev/dri "$NEW_ROOT/dev/dri"
+  fi
+  if [ -d /run/opengl-driver ]; then
+    mkdir -p "$NEW_ROOT/run/opengl-driver"
+    mount --bind /run/opengl-driver "$NEW_ROOT/run/opengl-driver"
+  fi
+fi
+_ENV=(
+  "PWD=$CHDIR"
+  "HOME=/root"
+  "USER=root"
+  "TERM=${TERM:-}"
+)
+if [ "$WAYLAND" = true ]; then
+  _ENV+=(
+    "XDG_RUNTIME_DIR=/run/user/0"
+    "WAYLAND_DISPLAY=wayland-0"
+    "DISPLAY=${DISPLAY:-}"
+    "NIXOS_OZONE_WL=${NIXOS_OZONE_WL:-}"
+    "XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-}"
+  )
+fi
+while IFS= read -r _e; do
+  [ -n "$_e" ] && _ENV+=("$_e")
+done <<< "$JAIL_SETENV"
+if [ -n "$NAME" ]; then
+  printf "%s\n" "${_ENV[@]}" > "/run/jail/$NAME/env"
+fi
+mount -t proc proc "$NEW_ROOT/proc"
+pivot_root "$NEW_ROOT" "$NEW_ROOT/old_root"
+if [ "$HAS_USERNS" -ne 0 ]; then
+  mount -t sysfs sysfs /sys # required for "ip netns exec" inside a user namespace
+fi
+cd /
+umount -l /old_root
+rmdir /old_root
+mkdir -p "$CHDIR"
+exec env -i --chdir "$CHDIR" "${_ENV[@]}" "$@"

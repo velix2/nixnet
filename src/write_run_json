@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Writes run.json in the current directory with host metadata (CPU, memory, kernel, sysctl)
+# and a reference to the Nix store path of the experiment. Used to annotate testbed runs.
 set -euo pipefail
 
 store_path="$1"
