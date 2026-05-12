@@ -16,7 +16,7 @@ jobs:
           - ubuntu-latest
           - ubuntu-24.04-arm
         example:
-          - name: bind_program
+          - name: bind
           - name: ebpf
             sudo: true
           - name: enter

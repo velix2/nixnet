@@ -39,6 +39,7 @@ printf "nobody:x:65534:65534:nobody:/var/empty:/bin/sh\n" >> "$NEW_ROOT/etc/pass
 printf "root:x:0:\n" > "$NEW_ROOT/etc/group"
 printf "nobody:x:65534:\n" >> "$NEW_ROOT/etc/group"
 printf "nogroup:x:65534:\n" >> "$NEW_ROOT/etc/group"
+printf "%s\n" "$NAME" > "$NEW_ROOT/etc/hostname"
 while IFS= read -r _entry; do
   [ -z "$_entry" ] && continue
   _mode="${_entry%%:*}"; _rest="${_entry#*:}"

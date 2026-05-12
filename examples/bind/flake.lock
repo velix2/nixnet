@@ -36,17 +36,41 @@
         "type": "github"
       }
     },
+    "jail": {
+      "inputs": {
+        "flake-parts": [
+          "nixnet",
+          "flake-parts"
+        ],
+        "nixpkgs": [
+          "nixnet",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "path": "./jail",
+        "type": "path"
+      },
+      "original": {
+        "path": "./jail",
+        "type": "path"
+      },
+      "parent": [
+        "nixnet"
+      ]
+    },
     "nixnet": {
       "inputs": {
         "flake-parts": "flake-parts_2",
+        "jail": "jail",
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1778158907,
-        "narHash": "sha256-EukbGcOSYgecPyCv76fth1jW9V28DSg4bakJqXKf6wk=",
+        "lastModified": 1778576126,
+        "narHash": "sha256-MBUcbeEioipkPv1k27I7iS8j0b92fUKmRJWKlDuLkzs=",
         "owner": "birneee",
         "repo": "nixnet",
-        "rev": "81a3310dc746b602b93438abab76be68d8865f2f",
+        "rev": "34bff88c00ab84557b9a0ec4ebc3c546e466f7fc",
         "type": "github"
       },
       "original": {

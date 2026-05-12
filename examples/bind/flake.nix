@@ -13,34 +13,27 @@
         "aarch64-linux"
       ];
       perSystem =
-        { inputs', pkgs, ... }:
+        { inputs', ... }:
         let
           nixnet = inputs'.nixnet.legacyPackages;
           config = {
             bind = [
-              "/bin/sh"
+              "/etc/hostname"
             ];
             namespaces = {
-              host-sh = {
+              guest = {
                 bind = [
-                  "/bind/bin/sh"
+                  "/bind/etc/hostname"
                 ];
                 scripts = [
                   {
-                    exec = "/bind/bind/bin/sh --version > ./version.txt 2>&1";
+                    exec = ''
+                      cat /bind/bind/etc/hostname | tee ./hostname.txt
+                      cat /etc/hostname | tee ./guestname.txt
+                    '';
                     await = true;
                   }
                 ];
-                workDir = "./host-sh";
-              };
-              nix-sh = {
-                scripts = [
-                  {
-                    exec = "${pkgs.bash}/bin/sh --version > ./version.txt 2>&1";
-                    await = true;
-                  }
-                ];
-                workDir = "./nix-sh";
               };
             };
           };
