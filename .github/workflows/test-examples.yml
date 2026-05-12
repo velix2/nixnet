@@ -16,13 +16,16 @@ jobs:
           - ubuntu-latest
           - ubuntu-24.04-arm
         example:
+          - name: bind_program
           - name: ebpf
             sudo: true
+          - name: enter
           - name: iperf
           - name: nc
           - name: ping
           - name: quiche_perf
           - name: route_metric
+          - name: star_topology
           - name: tcpdump
           #- name: chromium # requires display
           #- name: tmux # requires interactive terminal
