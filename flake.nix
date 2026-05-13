@@ -386,6 +386,7 @@
             nsName: idx: scriptCfg:
             pkgs.writeScript "${name}-script-${nsName}-${toString idx}" ''
               #!${pkgs.bash}/bin/bash
+              set -euo pipefail
               ${scriptCfg.exec}
             '';
 
