@@ -861,6 +861,7 @@
                   PIDS=("''${PIDS[@]/$PID}")
                 done
                 [ "$_FAILED" -eq 0 ] || exit 1
+                stop_pids
               '')
               (mkBashSection "post-run hook" [ tb.postRun ])
             ]
@@ -875,10 +876,9 @@
 
             PIDS=()
             WAIT_PIDS=()
+            _FAILED=0
 
-            cleanup() {
-              _FAILED=$?
-              echo "testbed| cleaning up..."
+            stop_pids() {
               for PID in "''${PIDS[@]}"; do
                 [ -n "$PID" ] || continue
                 if [ -e "/proc/$PID" ]; then
@@ -893,6 +893,13 @@
                   [ "$_EXIT" -eq 0 ] || _FAILED=1
                 fi
               done
+              PIDS=()
+            }
+
+            cleanup() {
+              _FAILED=$?
+              echo "testbed| cleaning up..."
+              stop_pids
               exit "$_FAILED"
             }
             trap cleanup EXIT
