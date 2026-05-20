@@ -39,26 +39,14 @@ _unshare_jail() {
     mkdir -p "/var/run/netns"
     touch "/run/jail/$NAME/user"
     touch "/var/run/netns/$NAME"
-    touch "/run/jail/$NAME/uts"
-    touch "/run/jail/$NAME/ipc"
-    touch "/run/jail/$NAME/cgroup"
-    touch "/run/jail/$NAME/time"
-    touch "/run/jail/$NAME/mnt"
-    touch "/run/jail/$NAME/pid"
     if [ "$(id -u)" -ne 0 ]; then
       user_args=("--user=/run/jail/$NAME/user" "--map-root-user")
     fi
     net_arg="--net=/var/run/netns/$NAME"
-    uts_arg="--uts=/run/jail/$NAME/uts"
-    ipc_arg="--ipc=/run/jail/$NAME/ipc"
-    cgroup_arg="--cgroup=/run/jail/$NAME/cgroup"
-    time_arg="--time=/run/jail/$NAME/time"
-    mnt_arg="--mount=/run/jail/$NAME/mnt"
-    pid_arg="--pid=/run/jail/$NAME/pid"
   fi
 
   export HAS_USERNS=${#user_args[@]}
-  unshare \
+  exec unshare \
     --keep-caps \
     "${user_args[@]}" \
     "$mnt_arg" \
@@ -74,20 +62,27 @@ _unshare_jail() {
 
 _jail_enter() {
   local _name="$1"; shift
+  # pid file indicates jail is ready
+  if [ ! -f "/run/jail/$_name/pid" ]; then
+    echo "jail enter: '$_name' does not exist" >&2
+    exit 1
+  fi
   local _chdir
   _chdir="$(sed -n 's/^PWD=//p' "/run/jail/$_name/env")"
   local -a _env
   mapfile -t _env < "/run/jail/$_name/env"
+  local _init_pid
+  _init_pid="$(< "/run/jail/$_name/pid")"
   local _user_arg=("--user=/run/jail/$_name/user")
   if [ "$(id -u)" -eq 0 ]; then _user_arg=(); fi
   exec nsenter \
     --preserve-credentials \
     "${_user_arg[@]}" \
-    --mount="/run/jail/$_name/mnt" \
+    --mount="/proc/$_init_pid/ns/mnt" \
     --net="/var/run/netns/$_name" \
-    --pid="/run/jail/$_name/pid" \
-    --uts="/run/jail/$_name/uts" \
-    --ipc="/run/jail/$_name/ipc" \
+    --pid="/proc/$_init_pid/ns/pid" \
+    --uts="/proc/$_init_pid/ns/uts" \
+    --ipc="/proc/$_init_pid/ns/ipc" \
     -- env \
       --ignore-environment \
       --chdir "$_chdir" \
@@ -110,7 +105,16 @@ _jail_add() {
     esac
   done
   local _name="$1"
-  _unshare_jail "$_name" "${_flags[@]}" "$(command -v init)"
+  mkdir -p "/run/jail/$_name"
+  # jail_setup writes outer init PID of jail to fifo when ready
+  local _fifo="/run/jail/$_name/.pid_fifo"
+  mkfifo "$_fifo"
+  _unshare_jail "$_name" "${_flags[@]}" "$(command -v init)" &
+  disown
+  local _init_pid
+  read -r _init_pid < "$_fifo"
+  rm -f "$_fifo"
+  printf '%s\n' "$_init_pid" > "/run/jail/$_name/pid"
 }
 
 cmd="${1:-}"
@@ -118,9 +122,7 @@ shift || true
 
 case "$cmd" in
   add)
-    _jail_add "$@" &
-    disown
-    until [ -s "/run/jail/${*: -1}/env" ]; do sleep 0.01; done
+    _jail_add "$@"
     ;;
   exec)
     _jail_exec "$@"

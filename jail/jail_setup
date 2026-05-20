@@ -86,10 +86,15 @@ fi
 while IFS= read -r _e; do
   [ -n "$_e" ] && _ENV+=("$_e")
 done <<< "$JAIL_SETENV"
+mkdir -p "$NEW_ROOT$CHDIR"
+mount -t proc proc "$NEW_ROOT/proc"
 if [ -n "$NAME" ]; then
   printf "%s\n" "${_ENV[@]}" > "/run/jail/$NAME/env"
+  # write outer init PID of jail to fifo before pivot_root
+  # use read builtin to not fork 
+  read -r _outer_pid _ < /proc/self/stat
+  printf "%s\n" "$_outer_pid" > "/run/jail/$NAME/.pid_fifo"
 fi
-mount -t proc proc "$NEW_ROOT/proc"
 pivot_root "$NEW_ROOT" "$NEW_ROOT/old_root"
 if [ "$HAS_USERNS" -ne 0 ]; then
   mount -t sysfs sysfs /sys # required for "ip netns exec" inside a user namespace
@@ -97,5 +102,4 @@ fi
 cd /
 umount -l /old_root
 rmdir /old_root
-mkdir -p "$CHDIR"
 exec env -i --chdir "$CHDIR" "${_ENV[@]}" "$@"
