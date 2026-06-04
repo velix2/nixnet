@@ -7,10 +7,24 @@ set -euo pipefail
 
 _unshare_jail() {
   export NAME="$1"; shift
+
   export WAYLAND=false
+
+  export USER_NS=false
+  export NET_NS=false
+  export UTS_NS=false
+  export IPC_NS=false
+  export CGROUP_NS=false
+  export PID_NS=false
+
+  export PROC_MOUNTS=""
+  export DEV_MOUNTS=""
+
   export CHDIR="/pwd"
+
   export JAIL_BINDS=""
   export JAIL_SETENV=""
+
   while [[ "${1:-}" == --* ]]; do
     case "$1" in
       --wayland)  WAYLAND=true; shift ;;
@@ -18,46 +32,93 @@ _unshare_jail() {
       --ro-bind)  JAIL_BINDS+="ro:${2}:${3}"$'\n'; shift 3 ;;
       --setenv)   JAIL_SETENV+="${2}=${3}"$'\n'; shift 3 ;;
       --chdir)    CHDIR="$2"; shift 2 ;;
+      --unshare-user) USER_NS=true; shift ;;
+      --unshare-net)  NET_NS=true; shift ;;
+      --unshare-uts)  UTS_NS=true; shift ;;
+      --unshare-ipc)  IPC_NS=true; shift ;;
+      --unshare-cgroup) CGROUP_NS=true; shift ;;
+      --unshare-pid)  PID_NS=true; shift ;;
+      --unshare-all)  USER_NS=true; NET_NS=true; UTS_NS=true; IPC_NS=true; CGROUP_NS=true; PID_NS=true; shift ;;
+      --proc)     PROC_MOUNTS+="$2"$'\n'; shift 2 ;;
+      --dev)      DEV_MOUNTS+="$2"$'\n'; shift 2 ;;
       --)         shift ; break;;
       *) echo "jail: unknown flag: $1" >&2; exit 1 ;;
     esac
   done
 
-  local user_args=("--user" "--map-root-user")
-  if [ "$(id -u)" -eq 0 ]; then
-    user_args=()
+  # User Namespace
+  # Special case: compare to bwrap
+  # - If user is not root, always create a user namespace
+  # - If user is root, and flag is not set, do not create a user namespace
+  # - If user is root, and flag is set, create a user namespace
+  local user_args=()
+  if [ "$(id -u)" -ne 0 ] || [ "$USER_NS" = true ]; then
+    export USER_NS=true
+    user_args=("--user" "--map-root-user")
   fi
-  local net_arg="--net"
-  local uts_arg="--uts"
-  local ipc_arg="--ipc"
-  local cgroup_arg="--cgroup"
-  local time_arg="--time"
-  local mnt_arg="--mount"
-  local pid_arg="--pid"
+
+  # Net Namespace
+  local net_arg=()
+  if [ "$NET_NS" = true ]; then
+    net_arg=("--net")
+  fi
+
+  # UTS Namespace
+  local uts_arg=()
+  if [ "$UTS_NS" = true ]; then
+    uts_arg=("--uts")
+  fi
+
+  # IPC Namespace
+  local ipc_arg=()
+  if [ "$IPC_NS" = true ]; then
+    ipc_arg=("--ipc")
+  fi
+
+  # CGROUP Namespace
+  local cgroup_arg=()
+  if [ "$CGROUP_NS" = true ]; then
+    cgroup_arg=("--cgroup")
+  fi
+
+  # Time Namespace - unchangeable for now
+  local time_arg=("--time")
+
+  # Mount Namespace - is always created
+  local mnt_arg=("--mount")
+
+  # PID Namespace
+  local pid_arg=()
+  if [ "$PID_NS" = true ]; then
+    pid_arg=("--pid")
+  fi
 
   if [ -n "$NAME" ]; then
     mkdir -p "/run/jail/$NAME"
     mkdir -p "/var/run/netns"
     touch "/run/jail/$NAME/user"
     touch "/var/run/netns/$NAME"
-    if [ "$(id -u)" -ne 0 ]; then
+    if [ "$(id -u)" -ne 0 ] && [ "$USER_NS" = true ]; then
       user_args=("--user=/run/jail/$NAME/user" "--map-root-user")
     fi
-    net_arg="--net=/var/run/netns/$NAME"
+
+    if [ "$NET_NS" = true ]; then
+      net_arg=("--net=/var/run/netns/$NAME")
+    fi
   fi
 
   export HAS_USERNS=${#user_args[@]}
   exec unshare \
     --keep-caps \
     "${user_args[@]}" \
-    "$mnt_arg" \
-    "$net_arg" \
-    "$pid_arg" \
+    "${mnt_arg[@]}" \
+    "${net_arg[@]}" \
+    "${pid_arg[@]}" \
     --fork \
-    "$uts_arg" \
-    "$ipc_arg" \
-    "$cgroup_arg" \
-    "$time_arg" \
+    "${uts_arg[@]}" \
+    "${ipc_arg[@]}" \
+    "${cgroup_arg[@]}" \
+    "${time_arg[@]}" \
     -- bash "$(dirname "$0")/jail_setup" "$@"
 }
 
@@ -68,22 +129,61 @@ _jail_enter() {
     echo "jail enter: '$_name' does not exist" >&2
     exit 1
   fi
-  local _chdir
-  _chdir="$(sed -n 's/^PWD=//p' "/run/jail/$_name/env")"
+
   local -a _env
   mapfile -t _env < "/run/jail/$_name/env"
   local _init_pid
   _init_pid="$(< "/run/jail/$_name/pid")"
-  local _user_arg=("--user=/run/jail/$_name/user")
-  if [ "$(id -u)" -eq 0 ]; then _user_arg=(); fi
+
+  local _chdir
+  _chdir="$(sed -n 's/^PWD=//p' "/run/jail/$_name/env")"
+
+  local _has_user_ns=false
+  _has_user_ns="$(sed -n 's/^USER_NS=//p' "/run/jail/$_name/env")"
+  if [ "$_has_user_ns" = true ]; then
+    local _user_arg=("--user=/run/jail/$_name/user")
+    if [ "$(id -u)" -eq 0 ]; then _user_arg=(); fi
+  fi
+
+  # Mount Namespace is always created
+  local _mnt_arg="--mount=/proc/$_init_pid/ns/mnt"
+
+  local _net_arg=()
+  local _has_net_ns=false
+  _has_net_ns="$(sed -n 's/^NET_NS=//p' "/run/jail/$_name/env")"
+  if [ "$_has_net_ns" = true ]; then
+    _net_arg=("--net=/var/run/netns/$_name")
+  fi
+
+  local _pid_arg=()
+  local _has_pid_ns=false
+  _has_pid_ns="$(sed -n 's/^PID_NS=//p' "/run/jail/$_name/env")"
+  if [ "$_has_pid_ns" = true ]; then
+    _pid_arg=("--pid=/proc/$_init_pid/ns/pid")
+  fi
+
+  local _uts_arg=()
+  local _has_uts_ns=false
+  _has_uts_ns="$(sed -n 's/^UTS_NS=//p' "/run/jail/$_name/env")"
+  if [ "$_has_uts_ns" = true ]; then
+    _uts_arg=("--uts=/proc/$_init_pid/ns/uts")
+  fi
+
+  local _ipc_arg=()
+  local _has_ipc_ns=false
+  _has_ipc_ns="$(sed -n 's/^IPC_NS=//p' "/run/jail/$_name/env")"
+  if [ "$_has_ipc_ns" = true ]; then
+    _ipc_arg=("--ipc=/proc/$_init_pid/ns/ipc")
+  fi
+
   exec nsenter \
     --preserve-credentials \
     "${_user_arg[@]}" \
-    --mount="/proc/$_init_pid/ns/mnt" \
-    --net="/var/run/netns/$_name" \
-    --pid="/proc/$_init_pid/ns/pid" \
-    --uts="/proc/$_init_pid/ns/uts" \
-    --ipc="/proc/$_init_pid/ns/ipc" \
+    "${_mnt_arg[@]}" \
+    "${_net_arg[@]}" \
+    "${_pid_arg[@]}" \
+    "${_uts_arg[@]}" \
+    "${_ipc_arg[@]}" \
     -- env \
       --ignore-environment \
       --chdir "$_chdir" \
@@ -100,9 +200,9 @@ _jail_add() {
   while [[ "${1:-}" == --* ]]; do
     case "$1" in
       --bind|--ro-bind|--setenv) _flags+=("$1" "$2" "$3"); shift 3 ;;
-      --chdir) _flags+=("$1" "$2"); shift 2 ;;
-      --wayland)        _flags+=("$1"); shift ;;
-      --)               shift ; break;;
+      --chdir|--proc|--dev) _flags+=("$1" "$2"); shift 2 ;;
+      --wayland|--unshare-user|--unshare-net|--unshare-uts|--unshare-ipc|--unshare-cgroup|--unshare-pid|--unshare-all) _flags+=("$1"); shift ;;
+      --)         shift ; break;;
       *) echo "jail add: unknown flag: $1" >&2; exit 1 ;;
     esac
   done

@@ -7,39 +7,86 @@ mount -t tmpfs tmpfs "$NEW_ROOT"
 mkdir -p "$NEW_ROOT/old_root"
 mkdir -p "$NEW_ROOT/bin"
 ln -s "$(command -v bash)" "$NEW_ROOT/bin/sh"
-mkdir -p "$NEW_ROOT/var/run/netns"
-mkdir -p "$NEW_ROOT/nix/store"
-mkdir -p "$NEW_ROOT/proc"
-mkdir -p "$NEW_ROOT/sys"
+
+mkdir -p "$NEW_ROOT/var/run/netns" # TODO: Should be handled by jail.nix combinators?
 mkdir -p "$NEW_ROOT/tmp"
-mkdir -p "$NEW_ROOT/dev"
 mkdir -p "$NEW_ROOT/root"
-mkdir -p "$NEW_ROOT/dev/pts"
-mount -t devpts devpts "$NEW_ROOT/dev/pts" -o newinstance,ptmxmode=0666
-ln -sf /dev/pts/ptmx "$NEW_ROOT/dev/ptmx"
-mkdir -p "$NEW_ROOT/dev/shm"
-chmod 1777 "$NEW_ROOT/dev/shm"
-ln -s /proc/self/fd "$NEW_ROOT/dev/fd"
-ln -s /proc/self/fd/0 "$NEW_ROOT/dev/stdin"
-ln -s /proc/self/fd/1 "$NEW_ROOT/dev/stdout"
-ln -s /proc/self/fd/2 "$NEW_ROOT/dev/stderr"
-touch "$NEW_ROOT/dev/null"
-touch "$NEW_ROOT/dev/zero"
-touch "$NEW_ROOT/dev/urandom"
-touch "$NEW_ROOT/dev/random"
-mount --bind /dev/null "$NEW_ROOT/dev/null"
-mount --bind /dev/zero "$NEW_ROOT/dev/zero"
-mount --bind /dev/urandom "$NEW_ROOT/dev/urandom"
-mount --bind /dev/random "$NEW_ROOT/dev/random"
+
+# /dev
+while IFS= read -r _dev_dir; do
+  [ -z "$_dev_dir" ] && continue
+  mkdir -p "$NEW_ROOT/$_dev_dir"
+  mkdir -p "$NEW_ROOT/$_dev_dir/pts"
+  mount -t devpts devpts "$NEW_ROOT/$_dev_dir/pts" -o newinstance,ptmxmode=0666
+  ln -sf /dev/pts/ptmx "$NEW_ROOT/$_dev_dir/ptmx"
+  mkdir -p "$NEW_ROOT/$_dev_dir/shm"
+  chmod 1777 "$NEW_ROOT/$_dev_dir/shm"
+  ln -s /proc/self/fd "$NEW_ROOT/$_dev_dir/fd"
+  ln -s /proc/self/fd/0 "$NEW_ROOT/$_dev_dir/stdin"
+  ln -s /proc/self/fd/1 "$NEW_ROOT/$_dev_dir/stdout"
+  ln -s /proc/self/fd/2 "$NEW_ROOT/$_dev_dir/stderr"
+  touch "$NEW_ROOT/$_dev_dir/null"
+  touch "$NEW_ROOT/$_dev_dir/zero"
+  touch "$NEW_ROOT/$_dev_dir/urandom"
+  touch "$NEW_ROOT/$_dev_dir/random"
+  mount --bind /dev/null "$NEW_ROOT/$_dev_dir/null"
+  mount --bind /dev/zero "$NEW_ROOT/$_dev_dir/zero"
+  mount --bind /dev/urandom "$NEW_ROOT/$_dev_dir/urandom"
+  mount --bind /dev/random "$NEW_ROOT/$_dev_dir/random"
+done <<< "$DEV_MOUNTS"
+
+# /proc mounts
+_temp_proc=false
+if [ "$PID_NS" = true ]; then
+  while IFS= read -r _proc_dir; do
+    [ -z "$_proc_dir" ] && continue
+    mkdir -p "$NEW_ROOT/$_proc_dir"
+    mount -t proc proc "$NEW_ROOT/$_proc_dir"
+  done <<< "$PROC_MOUNTS"
+
+  # Check if /proc is already a mount point (for setup purposes)
+  if ! mountpoint -q "$NEW_ROOT/proc"; then
+    mkdir -p "$NEW_ROOT/proc"
+    mount -t proc proc "$NEW_ROOT/proc"
+    _temp_proc=true
+  fi
+
+else
+  # if no PID namespace, use rbind to share /proc with the host
+  while IFS= read -r _proc_dir; do
+    [ -z "$_proc_dir" ] && continue
+    mkdir -p "$NEW_ROOT/$_proc_dir"
+    mount --rbind /proc "$NEW_ROOT/$_proc_dir"
+  done <<< "$PROC_MOUNTS"
+
+  # Check if /proc is already a mount point (for setup purposes)
+  if ! mountpoint -q "$NEW_ROOT/proc"; then
+    mkdir -p "$NEW_ROOT/proc"
+    mount --rbind /proc "$NEW_ROOT/proc"
+    _temp_proc=true
+  fi
+fi
+
+# TODO: maybe add flag (--bind-nix-store or sth)
+mkdir -p "$NEW_ROOT/nix/store"
 mount --rbind /nix/store "$NEW_ROOT/nix/store"
-mount --rbind /sys "$NEW_ROOT/sys" # required otherwise "ip netns exec" fails inside
-mkdir -p "$NEW_ROOT/etc"
-printf "root:x:0:0:root:/root:/bin/sh\n" > "$NEW_ROOT/etc/passwd"
-printf "nobody:x:65534:65534:nobody:/var/empty:/bin/sh\n" >> "$NEW_ROOT/etc/passwd"
-printf "root:x:0:\n" > "$NEW_ROOT/etc/group"
-printf "nobody:x:65534:\n" >> "$NEW_ROOT/etc/group"
-printf "nogroup:x:65534:\n" >> "$NEW_ROOT/etc/group"
-printf "%s\n" "$NAME" > "$NEW_ROOT/etc/hostname"
+
+if [ "$NET_NS" = true ]; then
+  mkdir -p "$NEW_ROOT/sys"
+  mount --rbind /sys "$NEW_ROOT/sys" # required otherwise "ip netns exec" fails inside
+fi
+
+# Hostname, passwd, group
+# TODO: can be replaced by jailnix fakepasswd
+# mkdir -p "$NEW_ROOT/etc"
+# printf "root:x:0:0:root:/root:/bin/sh\n" > "$NEW_ROOT/etc/passwd"
+# printf "nobody:x:65534:65534:nobody:/var/empty:/bin/sh\n" >> "$NEW_ROOT/etc/passwd"
+# printf "root:x:0:\n" > "$NEW_ROOT/etc/group"
+# printf "nobody:x:65534:\n" >> "$NEW_ROOT/etc/group"
+# printf "nogroup:x:65534:\n" >> "$NEW_ROOT/etc/group"
+# printf "%s\n" "$NAME" > "$NEW_ROOT/etc/hostname"
+
+# Bind mounts
 while IFS= read -r _entry; do
   [ -z "$_entry" ] && continue
   _mode="${_entry%%:*}"; _rest="${_entry#*:}"
@@ -55,6 +102,8 @@ while IFS= read -r _entry; do
     mount -o remount,ro,bind "$NEW_ROOT$_dst"
   fi
 done <<< "$JAIL_BINDS"
+
+# TODO: can be replaced by jailnix wayland combinator
 if [ "$WAYLAND" = true ]; then
   mkdir -p "$NEW_ROOT/run/user/0"
   touch "$NEW_ROOT/run/user/0/wayland-0"
@@ -68,12 +117,15 @@ if [ "$WAYLAND" = true ]; then
     mount --bind /run/opengl-driver "$NEW_ROOT/run/opengl-driver"
   fi
 fi
+
 _ENV=(
   "PWD=$CHDIR"
   "HOME=/root"
   "USER=root"
   "TERM=${TERM:-}"
 )
+
+# TODO: can be replaced by jailnix wayland combinator
 if [ "$WAYLAND" = true ]; then
   _ENV+=(
     "XDG_RUNTIME_DIR=/run/user/0"
@@ -83,23 +135,37 @@ if [ "$WAYLAND" = true ]; then
     "XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-}"
   )
 fi
+
+# read additional environment variables from JAIL_SETENV
 while IFS= read -r _e; do
   [ -n "$_e" ] && _ENV+=("$_e")
 done <<< "$JAIL_SETENV"
+
+# create working directory
 mkdir -p "$NEW_ROOT$CHDIR"
-mount -t proc proc "$NEW_ROOT/proc"
+
 if [ -n "$NAME" ]; then
   printf "%s\n" "${_ENV[@]}" > "/run/jail/$NAME/env"
   # write outer init PID of jail to fifo before pivot_root
-  # use read builtin to not fork 
+  # use read builtin to not fork
   read -r _outer_pid _ < /proc/self/stat
   printf "%s\n" "$_outer_pid" > "/run/jail/$NAME/.pid_fifo"
 fi
+
 pivot_root "$NEW_ROOT" "$NEW_ROOT/old_root"
-if [ "$HAS_USERNS" -ne 0 ]; then
+
+if [ "$HAS_USERNS" -ne 0 ] && [ "$NET_NS" = true ]; then
+  mkdir -p "/sys"
   mount -t sysfs sysfs /sys # required for "ip netns exec" inside a user namespace
 fi
 cd /
 umount -l /old_root
 rmdir /old_root
+
+# Clean up /proc only if we temporarily mounted it
+if [ "$_temp_proc" = true ]; then
+  umount -l /proc
+  rmdir /proc
+fi
+
 exec env -i --chdir "$CHDIR" "${_ENV[@]}" "$@"

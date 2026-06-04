@@ -6,4 +6,6 @@ _PATH="$(dirname "$(command -v cat)"):$_PATH"
 _PATH="$(dirname "$(command -v bash)"):$_PATH"
 _PATH="$(dirname "$(command -v jail)"):$_PATH"
 
-jail exec --setenv "PATH" "$_PATH" bash -c "jail add --setenv PATH $_PATH test; jail enter test bash -c 'cat /etc/hostname'"
+# TODO: Use jail.nix's fake passwd/hostname when ready
+jail exec --ro-bind /etc/hostname /etc/hostname --setenv "PATH" "$_PATH" bash -c "jail add --ro-bind /etc/hostname /etc/hostname --setenv PATH $_PATH test; jail enter test bash -c 'cat /etc/hostname'"
+#jail exec --ro-bind /etc/hostname /etc/hostname --setenv "PATH" "$_PATH" bash
