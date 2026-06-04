@@ -6,4 +6,4 @@ _PATH="$(dirname "$(command -v cat)"):$_PATH"
 _PATH="$(dirname "$(command -v bash)"):$_PATH"
 _PATH="$(dirname "$(command -v jail)"):$_PATH"
 
-jail exec --setenv "PATH=$_PATH" bash -c "jail add --setenv PATH=$_PATH test; jail enter test bash -c 'cat /etc/hostname'"
+jail exec --setenv "PATH" "$_PATH" bash -c "jail add --setenv PATH $_PATH test; jail enter test bash -c 'cat /etc/hostname'"

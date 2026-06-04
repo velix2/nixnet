@@ -16,7 +16,7 @@ _unshare_jail() {
       --wayland)  WAYLAND=true; shift ;;
       --bind)     JAIL_BINDS+="rw:${2}:${3}"$'\n'; shift 3 ;;
       --ro-bind)  JAIL_BINDS+="ro:${2}:${3}"$'\n'; shift 3 ;;
-      --setenv)   JAIL_SETENV+="${2}"$'\n'; shift 2 ;;
+      --setenv)   JAIL_SETENV+="${2}=${3}"$'\n'; shift 3 ;;
       --chdir)    CHDIR="$2"; shift 2 ;;
       --)         shift ; break;;
       *) echo "jail: unknown flag: $1" >&2; exit 1 ;;
@@ -99,8 +99,8 @@ _jail_add() {
   local _flags=()
   while [[ "${1:-}" == --* ]]; do
     case "$1" in
-      --bind|--ro-bind) _flags+=("$1" "$2" "$3"); shift 3 ;;
-      --setenv|--chdir) _flags+=("$1" "$2"); shift 2 ;;
+      --bind|--ro-bind|--setenv) _flags+=("$1" "$2" "$3"); shift 3 ;;
+      --chdir) _flags+=("$1" "$2"); shift 2 ;;
       --wayland)        _flags+=("$1"); shift ;;
       --)               shift ; break;;
       *) echo "jail add: unknown flag: $1" >&2; exit 1 ;;

@@ -464,7 +464,7 @@
                 ++ [ nsPathLines ]
                 ++ lib.optional (dir != "") "mkdir -p '${dir}'"
                 ++ [
-                  "jail add \\\n  --setenv PATH=$_PATH${
+                  "jail add \\\n  --setenv PATH $_PATH${
                     lib.optionalString (dir != "") " \\\n  --bind '${dir}' /pwd \\\n  --chdir /pwd"
                   }${wayland}${binds} \\\n  ${name}"
                 ]
@@ -975,7 +975,7 @@
               let
                 jailFlags =
                   [
-                    ''--setenv "PATH=$PATH"''
+                    ''--setenv "PATH" "$PATH"''
                   ]
                   ++ lib.optional tb.shareWayland "--wayland"
                   ++ map (
