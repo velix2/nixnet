@@ -18,6 +18,7 @@ _unshare_jail() {
       --ro-bind)  JAIL_BINDS+="ro:${2}:${3}"$'\n'; shift 3 ;;
       --setenv)   JAIL_SETENV+="${2}"$'\n'; shift 2 ;;
       --chdir)    CHDIR="$2"; shift 2 ;;
+      --)         shift ; break;;
       *) echo "jail: unknown flag: $1" >&2; exit 1 ;;
     esac
   done
@@ -101,6 +102,7 @@ _jail_add() {
       --bind|--ro-bind) _flags+=("$1" "$2" "$3"); shift 3 ;;
       --setenv|--chdir) _flags+=("$1" "$2"); shift 2 ;;
       --wayland)        _flags+=("$1"); shift ;;
+      --)               shift ; break;;
       *) echo "jail add: unknown flag: $1" >&2; exit 1 ;;
     esac
   done
