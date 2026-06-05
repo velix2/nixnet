@@ -5,10 +5,10 @@ set -euo pipefail
 NEW_ROOT="$(mktemp -d)"
 mount -t tmpfs tmpfs "$NEW_ROOT"
 mkdir -p "$NEW_ROOT/old_root"
+
 mkdir -p "$NEW_ROOT/bin"
 ln -s "$(command -v bash)" "$NEW_ROOT/bin/sh"
 
-mkdir -p "$NEW_ROOT/tmp"
 mkdir -p "$NEW_ROOT/root"
 
 # /dev
@@ -65,6 +65,14 @@ else
     _temp_proc=true
   fi
 fi
+
+# tmpfs mounts
+while IFS= read -r _tmp_dir; do
+  [ -z "$_tmp_dir" ] && continue
+  mkdir -p "$NEW_ROOT/$_tmp_dir"
+  mount -t tmpfs tmpfs "$NEW_ROOT/$_tmp_dir"
+  chmod 0755 "$NEW_ROOT/$_tmp_dir" # to be in-line with bwrap's standard behavior
+done <<< "$TMPFS_MOUNTS"
 
 # TODO: maybe add flag (--bind-nix-store or sth)
 mkdir -p "$NEW_ROOT/nix/store"
