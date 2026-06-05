@@ -28,22 +28,23 @@ _unshare_jail() {
 
   while [[ "${1:-}" == --* ]]; do
     case "$1" in
-      --wayland)  WAYLAND=true; shift ;;
-      --bind)     JAIL_BINDS+="rw:${2}:${3}"$'\n'; shift 3 ;;
-      --ro-bind)  JAIL_BINDS+="ro:${2}:${3}"$'\n'; shift 3 ;;
-      --setenv)   JAIL_SETENV+="${2}=${3}"$'\n'; shift 3 ;;
-      --chdir)    CHDIR="$2"; shift 2 ;;
-      --unshare-user) USER_NS=true; shift ;;
-      --unshare-net)  NET_NS=true; shift ;;
-      --unshare-uts)  UTS_NS=true; shift ;;
-      --unshare-ipc)  IPC_NS=true; shift ;;
+      --wayland)        WAYLAND=true; shift ;;
+      --bind)           JAIL_BINDS+="rw:${2}:${3}"$'\n'; shift 3 ;;
+      --ro-bind)        JAIL_BINDS+="ro:${2}:${3}"$'\n'; shift 3 ;;
+      --setenv)         JAIL_SETENV+="${2}=${3}"$'\n'; shift 3 ;;
+      --chdir)          CHDIR="$2"; shift 2 ;;
+      --unshare-user)   USER_NS=true; shift ;;
+      --unshare-net)    NET_NS=true; shift ;;
+      --unshare-uts)    UTS_NS=true; shift ;;
+      --unshare-ipc)    IPC_NS=true; shift ;;
       --unshare-cgroup) CGROUP_NS=true; shift ;;
-      --unshare-pid)  PID_NS=true; shift ;;
-      --unshare-all)  USER_NS=true; NET_NS=true; UTS_NS=true; IPC_NS=true; CGROUP_NS=true; PID_NS=true; shift ;;
-      --proc)     PROC_MOUNTS+="$2"$'\n'; shift 2 ;;
-      --dev)      DEV_MOUNTS+="$2"$'\n'; shift 2 ;;
-      --tmpfs)      TMPFS_MOUNTS+="$2"$'\n'; shift 2 ;;
-      --)         shift ; break;;
+      --unshare-pid)    PID_NS=true; shift ;;
+      --unshare-all)    USER_NS=true; NET_NS=true; UTS_NS=true; IPC_NS=true; CGROUP_NS=true; PID_NS=true; shift ;;
+      --proc)           PROC_MOUNTS+="$2"$'\n'; shift 2 ;;
+      --dev)            DEV_MOUNTS+="$2"$'\n'; shift 2 ;;
+      --tmpfs)          TMPFS_MOUNTS+="$2"$'\n'; shift 2 ;;
+      --clearenv)       JAIL_SETENV=""; shift ;;
+      --)               shift ; break;;
       *) echo "jail: unknown flag: $1" >&2; exit 1 ;;
     esac
   done
@@ -203,7 +204,7 @@ _jail_add() {
     case "$1" in
       --bind|--ro-bind|--setenv) _flags+=("$1" "$2" "$3"); shift 3 ;;
       --chdir|--proc|--dev|--tmpfs) _flags+=("$1" "$2"); shift 2 ;;
-      --wayland|--unshare-user|--unshare-net|--unshare-uts|--unshare-ipc|--unshare-cgroup|--unshare-pid|--unshare-all) _flags+=("$1"); shift ;;
+      --wayland|--unshare-user|--unshare-net|--unshare-uts|--unshare-ipc|--unshare-cgroup|--unshare-pid|--unshare-all|--clearenv) _flags+=("$1"); shift ;;
       --)         shift ; break;;
       *) echo "jail add: unknown flag: $1" >&2; exit 1 ;;
     esac
