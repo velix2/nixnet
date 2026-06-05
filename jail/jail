@@ -31,6 +31,7 @@ _unshare_jail() {
       --wayland)        WAYLAND=true; shift ;;
       --bind)           JAIL_BINDS+="rw:${2}:${3}"$'\n'; shift 3 ;;
       --ro-bind)        JAIL_BINDS+="ro:${2}:${3}"$'\n'; shift 3 ;;
+      --dev-bind)       JAIL_BINDS+="rw:${2}:${3}"$'\n'; shift 3 ;; # for now, handle dev binds as regular binds
       --setenv)         JAIL_SETENV+="${2}=${3}"$'\n'; shift 3 ;;
       --chdir)          CHDIR="$2"; shift 2 ;;
       --unshare-user)   USER_NS=true; shift ;;
@@ -202,7 +203,7 @@ _jail_add() {
   local _flags=()
   while [[ "${1:-}" == --* ]]; do
     case "$1" in
-      --bind|--ro-bind|--setenv) _flags+=("$1" "$2" "$3"); shift 3 ;;
+      --bind|--ro-bind|--setenv|--dev-bind) _flags+=("$1" "$2" "$3"); shift 3 ;;
       --chdir|--proc|--dev|--tmpfs) _flags+=("$1" "$2"); shift 2 ;;
       --wayland|--unshare-user|--unshare-net|--unshare-uts|--unshare-ipc|--unshare-cgroup|--unshare-pid|--unshare-all|--clearenv) _flags+=("$1"); shift ;;
       --)         shift ; break;;
