@@ -8,7 +8,6 @@ mkdir -p "$NEW_ROOT/old_root"
 mkdir -p "$NEW_ROOT/bin"
 ln -s "$(command -v bash)" "$NEW_ROOT/bin/sh"
 
-mkdir -p "$NEW_ROOT/var/run/netns" # TODO: Should be handled by jail.nix combinators?
 mkdir -p "$NEW_ROOT/tmp"
 mkdir -p "$NEW_ROOT/root"
 
