@@ -127,6 +127,7 @@ _unshare_jail() {
   export HAS_USERNS=${#user_args[@]}
   exec unshare \
     --keep-caps \
+    --forward-signals \
     "${user_args[@]}" \
     "${mnt_arg[@]}" \
     "${net_arg[@]}" \
@@ -193,6 +194,9 @@ _jail_enter() {
     _ipc_arg=("--ipc=/proc/$_init_pid/ns/ipc")
   fi
 
+  # setpriv --pdeathsig TERM delivers SIGTERM to the entered command if its
+  # nsenter parent is killed, so signalling a single `jail enter` tears down just
+  # that command (running its cleanup trap) instead of orphaning it in the jail.
   exec nsenter \
     --preserve-credentials \
     "${_user_arg[@]}" \
@@ -201,6 +205,7 @@ _jail_enter() {
     "${_pid_arg[@]}" \
     "${_uts_arg[@]}" \
     "${_ipc_arg[@]}" \
+    -- setpriv --pdeathsig TERM \
     -- env \
       --ignore-environment \
       --chdir "$_chdir" \

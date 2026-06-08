@@ -108,6 +108,11 @@
                     default = false;
                     description = "Bind the Wayland display socket and graphics devices into the sandbox, enabling GUI applications.";
                   };
+                  sharePipeWire = lib.mkOption {
+                    type = lib.types.bool;
+                    default = false;
+                    description = "Bind the PipeWire and PulseAudio-compat sockets into the sandbox, enabling audio output.";
+                  };
                 };
               }
             );
@@ -224,6 +229,11 @@
             type = lib.types.bool;
             default = false;
             description = "Bind the Wayland display socket and graphics devices into the sandbox, enabling GUI applications.";
+          };
+          sharePipeWire = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Bind the PipeWire and PulseAudio-compat sockets into the sandbox, enabling audio output.";
           };
           preSetup = lib.mkOption {
             type = lib.types.str;
@@ -451,6 +461,13 @@
                 nsPkgs = (nsCfg.packages or [ ]) ++ tb.namespacePackages;
                 nsPathLines = mkPathLines nsPkgs;
                 wayland = lib.optionalString (nsCfg != null && (nsCfg.shareWayland or false)) " \\\n  --wayland";
+                pipewire = lib.optionalString (nsCfg != null && (nsCfg.sharePipeWire or false)) (
+                  " \\\n  --ro-bind \"$XDG_RUNTIME_DIR/\${PIPEWIRE_REMOTE:-pipewire-0}\" \"/run/user/0/pipewire-0\""
+                  + " \\\n  --ro-bind \"$XDG_RUNTIME_DIR/pulse/native\" \"/run/user/0/pulse/native\""
+                  + " \\\n  --setenv \"XDG_RUNTIME_DIR=/run/user/0\""
+                  + " \\\n  --setenv \"PIPEWIRE_REMOTE=pipewire-0\""
+                  + " \\\n  --setenv \"PULSE_SERVER=unix:/run/user/0/pulse/native\""
+                );
                 binds = lib.concatMapStrings (
                   binding:
                   if binding.readonly then
@@ -466,7 +483,7 @@
                 ++ [
                   "jail add \\\n  --setenv PATH $_PATH${
                     lib.optionalString (dir != "") " \\\n  --bind '${dir}' /pwd \\\n  --chdir /pwd"
-                  }${wayland}${binds} \\\n  ${name}"
+                  }${wayland}${pipewire}${binds} \\\n  ${name}"
                 ]
               )
             ) (lib.attrNames namespaces)
@@ -865,8 +882,11 @@
                 # wait for background processes marked as await
                 _FAILED=0
                 for PID in "''${WAIT_PIDS[@]}"; do
+                  while kill -0 "$PID" 2>/dev/null; do
+                    sleep 0.1
+                  done
                   _EXIT=0
-                  wait "$PID" || _EXIT=$?
+                  wait "$PID" 2>/dev/null || _EXIT=$?
                   echo "testbed| PID $PID exited with $_EXIT"
                   [ "$_EXIT" -eq 0 ] || _FAILED=1
                   PIDS=("''${PIDS[@]/$PID}")
@@ -893,9 +913,8 @@
               for PID in "''${PIDS[@]}"; do
                 [ -n "$PID" ] || continue
                 if [ -e "/proc/$PID" ]; then
-                  if kill -INT -- -"$PID" 2>/dev/null; then
-                    echo "testbed| PID $PID killed"
-                  fi
+                  kill -INT -- -"$PID" 2>/dev/null || true
+                  echo "testbed| PID $PID killed"
                   wait "$PID" || true
                 else
                   _EXIT=0
@@ -914,6 +933,7 @@
               exit "$_FAILED"
             }
             trap cleanup EXIT
+            trap 'stop_pids; exit 130' INT TERM
 
             ${lib.optionalString (workDir != null && workDirEnsureEmpty) ''
               if [ -n "$(ls -A . 2>/dev/null)" ]; then
@@ -938,102 +958,109 @@
           dontUnpack = true;
           strictDeps = true;
           nativeBuildInputs = [ ];
-          installPhase =
-            ''
-              mkdir -p $out/bin
-            ''
-            + lib.concatStrings (
-              lib.mapAttrsToList (
-                nsName: nsCfg:
-                lib.concatStrings (
-                  lib.imap0 (
-                    idx: _scriptCfg:
-                    let
-                      scriptFile = builtins.elemAt nsScriptFiles.${nsName} idx;
-                    in
-                    ''
-                      mkdir -p $out/namespaces/${nsName}/scripts
-                      install -m 0755 ${scriptFile} $out/namespaces/${nsName}/scripts/${toString idx}
-                    ''
-                  ) nsCfg.scripts
-                )
-              ) namespaces
-            )
-            + lib.concatStrings (
-              lib.imap0 (
-                idx: _scriptCfg:
-                let
-                  scriptFile = builtins.elemAt tbScriptFiles idx;
-                in
-                ''
-                  mkdir -p $out/scripts
-                  install -m 0755 ${scriptFile} $out/scripts/${toString idx}
-                ''
-              ) tb.scripts
-            )
-            + (
+          installPhase = ''
+            mkdir -p $out/bin
+          ''
+          + lib.concatStrings (
+            lib.mapAttrsToList (
+              nsName: nsCfg:
+              lib.concatStrings (
+                lib.imap0 (
+                  idx: _scriptCfg:
+                  let
+                    scriptFile = builtins.elemAt nsScriptFiles.${nsName} idx;
+                  in
+                  ''
+                    mkdir -p $out/namespaces/${nsName}/scripts
+                    install -m 0755 ${scriptFile} $out/namespaces/${nsName}/scripts/${toString idx}
+                  ''
+                ) nsCfg.scripts
+              )
+            ) namespaces
+          )
+          + lib.concatStrings (
+            lib.imap0 (
+              idx: _scriptCfg:
               let
-                jailFlags =
-                  [
-                    ''--setenv "PATH" "$PATH"''
-                  ]
-                  ++ lib.optional tb.shareWayland "--wayland"
-                  ++ map (
-                    binding:
-                    if binding.readonly then
-                      "--ro-bind '${binding.path}' '/ro-host${binding.path}'"
-                    else
-                      "--bind '${binding.path}' '/host${binding.path}'"
-                  ) tbAutoHostBinds
-                  ++ lib.optionals (workDir != null) [
-                    ''--bind "$_WORK_DIR" /pwd''
-                    "--chdir /pwd"
-                  ];
+                scriptFile = builtins.elemAt tbScriptFiles idx;
               in
               ''
-                install -m 0755 ${pkgs.writeScript name ''
-                  #!${pkgs.bash}/bin/bash
-                  set -euo pipefail
-
-                  _PATH="" # clear path
-                  ${mkPathLines (tb.testbedPackages ++ [ jail_pkg ])}
-                  export PATH="$_PATH"
-
-                  ${concatNonEmpty [
-                    (
-                      if hasTemplate then
-                        ''
-                          IFS='-' read -r _START _END <<< "''${1:-}"
-                          if [ -n "$_END" ]; then
-                            for _RUN_NUM in $(seq "$_START" "$_END"); do
-                              "$0" "$_RUN_NUM" || true
-                            done
-                            exit 0
-                          fi
-                          _RUN_NUM=''${_START:-0}
-                          _WORK_DIR_TPL='${workDir}'
-                          _WORK_DIR="''${_WORK_DIR_TPL//\{run\}/$(printf "%02d" "$_RUN_NUM")}"
-                          while [ -z "''${1:-}" ] && [ -e "$_WORK_DIR" ]; do
-                            _RUN_NUM=$((_RUN_NUM+1))
-                            _WORK_DIR="''${_WORK_DIR_TPL//\{run\}/$(printf "%02d" "$_RUN_NUM")}"
-                          done
-                        ''
-                      else
-                        lib.optionalString (workDir != null) ''
-                          _WORK_DIR='${workDir}'
-                        ''
-                    )
-                    (lib.optionalString (workDir != null) ''
-                      mkdir -p "$_WORK_DIR"
-                      echo "testbed| workdir: $(realpath "$_WORK_DIR")"'')
-                  ]}
-
-                  exec jail exec \
-                    ${lib.concatStringsSep " \\\n  " (jailFlags ++ [ "\"$(dirname \"$0\")/.${name}-wrapped\"" ])}
-                ''} $out/bin/${name}
-                install -m 0755 ${pkgs.writeScript "${name}-wrapped" scriptText} $out/bin/.${name}-wrapped
+                mkdir -p $out/scripts
+                install -m 0755 ${scriptFile} $out/scripts/${toString idx}
               ''
-            );
+            ) tb.scripts
+          )
+          + (
+            let
+              anyNsShareWayland = lib.any (ns: ns.shareWayland) (lib.attrValues namespaces);
+              anyNsSharePipeWire = lib.any (ns: ns.sharePipeWire) (lib.attrValues namespaces);
+              jailFlags = [
+                ''--setenv "PATH=$PATH"''
+              ]
+              ++ lib.optional (tb.shareWayland || anyNsShareWayland) "--wayland"
+              ++ lib.optionals (tb.sharePipeWire || anyNsSharePipeWire) [
+                ''--ro-bind "$XDG_RUNTIME_DIR/''${PIPEWIRE_REMOTE:-pipewire-0}" "/run/user/0/pipewire-0"''
+                ''--ro-bind "$XDG_RUNTIME_DIR/pulse/native" "/run/user/0/pulse/native"''
+                ''--setenv "XDG_RUNTIME_DIR=/run/user/0"''
+                ''--setenv "PIPEWIRE_REMOTE=pipewire-0"''
+                ''--setenv "PULSE_SERVER=unix:/run/user/0/pulse/native"''
+              ]
+              ++ map (
+                binding:
+                if binding.readonly then
+                  "--ro-bind '${binding.path}' '/ro-host${binding.path}'"
+                else
+                  "--bind '${binding.path}' '/host${binding.path}'"
+              ) tbAutoHostBinds
+              ++ lib.optionals (workDir != null) [
+                ''--bind "$_WORK_DIR" /pwd''
+                "--chdir /pwd"
+              ];
+            in
+            ''
+              install -m 0755 ${pkgs.writeScript name ''
+                #!${pkgs.bash}/bin/bash
+                set -euo pipefail
+
+                _PATH="" # clear path
+                ${mkPathLines (tb.testbedPackages ++ [ jail_pkg ])}
+                export PATH="$_PATH"
+
+                ${concatNonEmpty [
+                  (
+                    if hasTemplate then
+                      ''
+                        IFS='-' read -r _START _END <<< "''${1:-}"
+                        if [ -n "$_END" ]; then
+                          for _RUN_NUM in $(seq "$_START" "$_END"); do
+                            "$0" "$_RUN_NUM" || true
+                          done
+                          exit 0
+                        fi
+                        _RUN_NUM=''${_START:-0}
+                        _WORK_DIR_TPL='${workDir}'
+                        _WORK_DIR="''${_WORK_DIR_TPL//\{run\}/$(printf "%02d" "$_RUN_NUM")}"
+                        while [ -z "''${1:-}" ] && [ -e "$_WORK_DIR" ]; do
+                          _RUN_NUM=$((_RUN_NUM+1))
+                          _WORK_DIR="''${_WORK_DIR_TPL//\{run\}/$(printf "%02d" "$_RUN_NUM")}"
+                        done
+                      ''
+                    else
+                      lib.optionalString (workDir != null) ''
+                        _WORK_DIR='${workDir}'
+                      ''
+                  )
+                  (lib.optionalString (workDir != null) ''
+                    mkdir -p "$_WORK_DIR"
+                    echo "testbed| workdir: $(realpath "$_WORK_DIR")"'')
+                ]}
+
+                exec jail exec \
+                  ${lib.concatStringsSep " \\\n  " (jailFlags ++ [ "\"$(dirname \"$0\")/.${name}-wrapped\"" ])}
+              ''} $out/bin/${name}
+              install -m 0755 ${pkgs.writeScript "${name}-wrapped" scriptText} $out/bin/.${name}-wrapped
+            ''
+          );
           meta.mainProgram = name;
         };
       buildMermaid =

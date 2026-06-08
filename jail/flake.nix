@@ -18,6 +18,7 @@
           packages = {
             default = pkgs.callPackage ./pkgs/jail.nix { };
             test = pkgs.callPackage ./pkgs/test.nix { };
+            sigint-test = pkgs.callPackage ./pkgs/sigint_test.nix { };
           };
         };
     };
