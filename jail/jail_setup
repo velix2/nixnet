@@ -102,4 +102,37 @@ fi
 cd /
 umount -l /old_root
 rmdir /old_root
-exec env -i --chdir "$CHDIR" "${_ENV[@]}" "$@"
+if [ -n "$NAME" ]; then
+  exec env -i --chdir "$CHDIR" "${_ENV[@]}" "$@"  # named jail: init handles signals itself
+fi
+# Run the command via setsid so a terminal SIGINT can't reach it directly; we
+# forward signals to it as SIGTERM instead (a foreground job bypasses an INT trap
+# but runs a TERM trap). Traps are installed before the child starts so an early
+# signal can't tear the namespace down via the default handler.
+_SIGNAL=0
+# kill -- -1 signals every process in this pid namespace except us (PID 1).
+trap '_SIGNAL=130; kill -s TERM -- -1 2>/dev/null' INT
+trap '_SIGNAL=143; kill -s TERM -- -1 2>/dev/null' TERM
+setsid env -i --chdir "$CHDIR" "${_ENV[@]}" "$@" <&0 &
+PID=$!
+# '|| EXIT_CODE=$?' so set -e doesn't exit on the signal-killed child before the
+# grace block below runs.
+EXIT_CODE=0
+wait "$PID" 2>/dev/null || EXIT_CODE=$?
+if [ "$_SIGNAL" -ne 0 ]; then
+  trap '' INT TERM  # ignore duplicate signals while cleanup runs
+  # Let cleanup traps finish before we exit (and the kernel SIGKILLs the rest):
+  # poll until the process table goes quiet, bounded by a deadline so a stuck
+  # process can't hang teardown. We poll instead of wait because the command's
+  # descendants aren't all our children, and named-jail inits stay alive by design.
+  _deadline=$((SECONDS + 5)); _prev=-1; _settle=0
+  while (( SECONDS < _deadline )); do
+    _procs=(/proc/[0-9]*); _cur=${#_procs[@]}
+    (( _cur == _prev )) && _settle=$((_settle + 1)) || _settle=0
+    (( _settle >= 4 )) && break
+    _prev=$_cur; sleep 0.05
+  done
+  exit "$_SIGNAL"
+fi
+trap - INT TERM
+exit "$EXIT_CODE"
