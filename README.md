@@ -157,3 +157,7 @@ For option documentation and completions with [nixd](https://github.com/nix-comm
 ## Contributing
 
 Contributions are welcome! Feel free to open issues or pull requests.
+
+## License
+
+[MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE), at your option.
