@@ -481,7 +481,7 @@
                 ++ [ nsPathLines ]
                 ++ lib.optional (dir != "") "mkdir -p '${dir}'"
                 ++ [
-                  "jail add \\\n  --setenv PATH $_PATH${
+                  "jail add \\\n  --setenv PATH=$_PATH${
                     lib.optionalString (dir != "") " \\\n  --bind '${dir}' /pwd \\\n  --chdir /pwd"
                   }${wayland}${pipewire}${binds} \\\n  ${name}"
                 ]
@@ -1140,24 +1140,7 @@
           jail_pkg = pkgs.callPackage ./jail/pkgs/jail.nix { };
         in
         {
-          packages.nixnet-option-docs =
-            let
-              optionsDoc =
-                (pkgs.nixosOptionsDoc {
-                  options = (lib.evalModules { modules = [ { options = mkTestbedOptions pkgs; } ]; }).options;
-                  transformOptions =
-                    opt:
-                    opt
-                    // {
-                      visible = opt.visible && !(lib.any (lib.hasPrefix "_") (lib.splitString "." opt.name));
-                    };
-                }).optionsCommonMark;
-            in
-            pkgs.runCommand "nixnet-option-docs.md" { } ''
-              echo "# NixNet Options" > $out
-              echo >> $out
-              cat ${optionsDoc} >> $out
-            '';
+          packages.nixnet-option-docs = import ./src/option_docs.nix { inherit pkgs mkTestbedOptions; };
 
           legacyPackages =
             let
@@ -1205,20 +1188,9 @@
                     _binds = map (e: e.path) entries;
                   };
                 });
-              mkTestbed = networkConfig: buildTestbed pkgs jail_pkg (evalConfig networkConfig).config;
-              mkMermaid =
-                networkConfig: pkgs.writeText "topology.mmd" (buildMermaid pkgs (evalConfig networkConfig).config);
-              mkMermaidSvg =
-                networkConfig:
-                pkgs.runCommand "topology.svg"
-                  {
-                    buildInputs = [ pkgs.nodePackages.mermaid-cli ];
-                    FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.liberation_ttf ]; };
-                    HOME = "/tmp";
-                  }
-                  ''
-                    mmdc -i ${mkMermaid networkConfig} -o $out
-                  '';
+              mkTestbed = networkConfig: buildTestbed { inherit pkgs jail_pkg; tb = (evalConfig networkConfig).config; };
+              mermaid = import ./src/mermaid.nix { inherit pkgs evalConfig; };
+              inherit (mermaid) mkMermaid mkMermaidSvg;
             };
         };
     };
