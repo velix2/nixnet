@@ -1188,7 +1188,12 @@
                     _binds = map (e: e.path) entries;
                   };
                 });
-              mkTestbed = networkConfig: buildTestbed { inherit pkgs jail_pkg; tb = (evalConfig networkConfig).config; };
+              mkTestbed =
+                networkConfig:
+                buildTestbed {
+                  inherit pkgs jail_pkg;
+                  tb = (evalConfig networkConfig).config;
+                };
               mermaid = import ./src/mermaid.nix { inherit pkgs evalConfig; };
               inherit (mermaid) mkMermaid mkMermaidSvg;
             };

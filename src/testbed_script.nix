@@ -34,7 +34,12 @@ let
     else
       null;
 
-  inherit (import ./common.nix { inherit pkgs; }) concatNonEmpty mkPathLines resolveFirst resolveNetem;
+  inherit (import ./common.nix { inherit pkgs; })
+    concatNonEmpty
+    mkPathLines
+    resolveFirst
+    resolveNetem
+    ;
 
   # Emit a commented bash section only when lines is non-empty.
   mkBashSection =
@@ -470,7 +475,6 @@ let
     ]
   );
 
-
   runPhaseSections = lib.concatStringsSep "\n\n" (
     lib.filter (s: s != "") [
       (mkBashSection "pre-run hook" [ tb.preRun ])
@@ -496,68 +500,67 @@ let
     ]
   );
 
-  scriptText =
-    ''
-      #!${pkgs.bash}/bin/bash
-      set -o errexit
-      set -o nounset
-      set -o pipefail
-    
-      set -m  # enable job control: each background job gets its own process group
-    
-      PIDS=()
-      WAIT_PIDS=()
-      _FAILED=0
-    
-      stop_pids() {
-        for PID in "''${PIDS[@]}"; do
-          [ -n "$PID" ] || continue
+  scriptText = ''
+    #!${pkgs.bash}/bin/bash
+    set -o errexit
+    set -o nounset
+    set -o pipefail
+
+    set -m  # enable job control: each background job gets its own process group
+
+    PIDS=()
+    WAIT_PIDS=()
+    _FAILED=0
+
+    stop_pids() {
+      for PID in "''${PIDS[@]}"; do
+        [ -n "$PID" ] || continue
+        if [ -e "/proc/$PID" ]; then
+          kill -INT -- -"$PID" 2>/dev/null || true
+          echo "testbed| PID $PID killed"
+          _deadline=$((SECONDS + 5))
+          while [ -e "/proc/$PID" ] && (( SECONDS < _deadline )); do
+            sleep 0.1
+          done
           if [ -e "/proc/$PID" ]; then
-            kill -INT -- -"$PID" 2>/dev/null || true
-            echo "testbed| PID $PID killed"
-            _deadline=$((SECONDS + 5))
-            while [ -e "/proc/$PID" ] && (( SECONDS < _deadline )); do
-              sleep 0.1
-            done
-            if [ -e "/proc/$PID" ]; then
-              kill -KILL -- -"$PID" 2>/dev/null || true
-            fi
-            wait "$PID" || true
-          else
-            _EXIT=0
-            wait "$PID" || _EXIT=$?
-            echo "testbed| PID $PID exited with $_EXIT"
-            [ "$_EXIT" -eq 0 ] || _FAILED=1
+            kill -KILL -- -"$PID" 2>/dev/null || true
           fi
-        done
-        PIDS=()
-      }
-    
-      cleanup() {
-        _FAILED=$?
-        echo "testbed| cleaning up..."
-        stop_pids
-        exit "$_FAILED"
-      }
-      trap cleanup EXIT
-      trap 'stop_pids; exit 130' INT TERM
-    
-      ${lib.optionalString (workDir != null && workDirEnsureEmpty) ''
-        if [ -n "$(ls -A . 2>/dev/null)" ]; then
-          echo "testbed| Error: workDir is not empty: $(pwd)"
-          exit 1
+          wait "$PID" || true
+        else
+          _EXIT=0
+          wait "$PID" || _EXIT=$?
+          echo "testbed| PID $PID exited with $_EXIT"
+          [ "$_EXIT" -eq 0 ] || _FAILED=1
         fi
-      ''}
-      ${lib.optionalString (workDir != null) ''
-        _STORE_PATH="$(dirname "$(dirname "$0")")"
-        ${writeRunJson} "$_STORE_PATH"
-      ''}
-    
-      ${setupPhaseSections}
-    
-      echo "testbed| network topology set up"
-    
-      ${runPhaseSections}'';
+      done
+      PIDS=()
+    }
+
+    cleanup() {
+      _FAILED=$?
+      echo "testbed| cleaning up..."
+      stop_pids
+      exit "$_FAILED"
+    }
+    trap cleanup EXIT
+    trap 'stop_pids; exit 130' INT TERM
+
+    ${lib.optionalString (workDir != null && workDirEnsureEmpty) ''
+      if [ -n "$(ls -A . 2>/dev/null)" ]; then
+        echo "testbed| Error: workDir is not empty: $(pwd)"
+        exit 1
+      fi
+    ''}
+    ${lib.optionalString (workDir != null) ''
+      _STORE_PATH="$(dirname "$(dirname "$0")")"
+      ${writeRunJson} "$_STORE_PATH"
+    ''}
+
+    ${setupPhaseSections}
+
+    echo "testbed| network topology set up"
+
+    ${runPhaseSections}'';
 in
 {
   inherit scriptText tbAutoHostBinds;

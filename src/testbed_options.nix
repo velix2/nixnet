@@ -38,9 +38,7 @@ in
   namespaces = lib.mkOption {
     default = { };
     description = "Network namespaces to create.";
-    type = lib.types.attrsOf (
-      import ./node_options.nix { inherit pkgs nixpkgs nixosSysctlOption; }
-    );
+    type = lib.types.attrsOf (import ./node_options.nix { inherit pkgs nixpkgs nixosSysctlOption; });
   };
 
   veths = lib.mkOption {
