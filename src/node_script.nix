@@ -1,46 +1,49 @@
-{ pkgs, tb }:
+{ pkgs, config }:
 let
   lib = pkgs.lib;
   inherit (import ./common.nix { inherit pkgs; }) concatNonEmpty;
-  name = tb.name;
-  namespaces = tb.namespaces;
+  name = config.name;
+  nodes = config.nodes;
 
   # Write a script entry to a store path, preserving Nix string context.
   mkScriptFile =
-    nsName: idx: scriptCfg:
-    pkgs.writeScript "${name}-script-${nsName}-${toString idx}" ''
+    nodeName: scriptName: scriptCfg:
+    pkgs.writeScript "${name}-script-${nodeName}-${scriptName}" ''
       #!${pkgs.bash}/bin/bash
       set -euo pipefail
       ${scriptCfg.exec}
     '';
 
-  # Pre-computed script files per namespace: { nsName -> [file0, file1, ...] }
+  # Pre-computed script files per node: { nodeName -> { scriptName -> file } }
   nsScriptFiles = lib.mapAttrs (
-    nsName: nsCfg: lib.imap0 (idx: scriptCfg: mkScriptFile nsName idx scriptCfg) nsCfg.scripts
-  ) namespaces;
+    nodeName: nodeCfg:
+    lib.mapAttrs (scriptName: scriptCfg: mkScriptFile nodeName scriptName scriptCfg) nodeCfg.scripts
+  ) nodes;
 
-  # Pre-computed script files for top-level testbed scripts: [file0, file1, ...]
-  tbScriptFiles = lib.imap0 (idx: scriptCfg: mkScriptFile "testbed" idx scriptCfg) tb.scripts;
+  # Pre-computed script files for top-level experiment scripts: { scriptName -> file }
+  tbScriptFiles = lib.mapAttrs (
+    scriptName: scriptCfg: mkScriptFile "experiment" scriptName scriptCfg
+  ) config.scripts;
 
   # All scripts as a flat list of { label, scriptPath, exec, scriptCfg }
   allScripts =
     lib.concatLists (
       lib.mapAttrsToList (
-        name: nsCfg:
-        lib.imap0 (idx: scriptCfg: {
-          label = name;
-          scriptPath = "\"$(dirname \"$0\")/../namespaces/${name}/scripts/${toString idx}\"";
-          exec = "jail enter ${name} ";
+        nodeName: nodeCfg:
+        lib.mapAttrsToList (scriptName: scriptCfg: {
+          label = nodeName;
+          scriptPath = "\"$(dirname \"$0\")/../nodes/${nodeName}/scripts/${scriptName}\"";
+          exec = "jail enter ${nodeName} ";
           inherit scriptCfg;
-        }) nsCfg.scripts
-      ) namespaces
+        }) nodeCfg.scripts
+      ) nodes
     )
-    ++ lib.imap0 (idx: scriptCfg: {
-      label = "testbed";
-      scriptPath = "\"$(dirname \"$0\")/../scripts/${toString idx}\"";
+    ++ lib.mapAttrsToList (scriptName: scriptCfg: {
+      label = "experiment";
+      scriptPath = "\"$(dirname \"$0\")/../scripts/${scriptName}\"";
       exec = "";
       inherit scriptCfg;
-    }) tb.scripts;
+    }) config.scripts;
 
   # Launch scripts in parallel; mark awaited ones; skip foreground scripts
   launchScripts = lib.concatMap (

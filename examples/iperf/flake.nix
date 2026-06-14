@@ -19,8 +19,11 @@
           config = {
             arp = false;
             arpPrefill = true;
-            namespacePackages = with pkgs; [ iperf3 coreutils ];
-            namespaces = {
+            nodePackages = with pkgs; [
+              iperf3
+              coreutils
+            ];
+            nodes = {
               ns-client = {
                 networking.interfaces.veth0.ipv4 = {
                   addresses = [
@@ -37,15 +40,13 @@
                     }
                   ];
                 };
-                scripts = [
-                  {
-                    exec = ''
-                      sleep 0.1
-                      iperf3 -c 10.0.1.2 > ./stdout 2>&1
-                    '';
-                    await = true;
-                  }
-                ];
+                scripts.main = {
+                  exec = ''
+                    sleep 0.1
+                    iperf3 -c 10.0.1.2 > ./stdout 2>&1
+                  '';
+                  await = true;
+                };
                 workDir = "./client";
               };
               ns-router = {
@@ -81,41 +82,26 @@
                     }
                   ];
                 };
-                scripts = [
-                  {
-                    exec = "iperf3 -s > ./stdout 2>&1";
-                  }
-                ];
+                scripts.main.exec = "iperf3 -s > ./stdout 2>&1";
                 workDir = "./server";
               };
             };
-            veths = [
-              {
-                netem.delayMs = 50;
-                a = {
-                  ns = "ns-client";
-                  iface = "veth0";
-                };
-                b = {
-                  ns = "ns-router";
-                  iface = "veth0";
-                };
-              }
-              {
-                a = {
-                  ns = "ns-router";
-                  iface = "veth1";
-                };
-                b = {
-                  ns = "ns-server";
-                  iface = "veth0";
-                };
-              }
-            ];
+            veths.veth0 = {
+              netem.delayMs = 50;
+              a.node = "ns-client";
+              b.node = "ns-router";
+            };
+            veths.veth1 = {
+              a.node = "ns-router";
+              b = {
+                node = "ns-server";
+                iface = "veth0";
+              };
+            };
           };
         in
         {
-          packages.default = nixnet.mkTestbed config;
+          packages.default = nixnet.mkExperiment config;
           packages.mermaid = nixnet.mkMermaid config;
           packages.mermaid-svg = nixnet.mkMermaidSvg config;
         };

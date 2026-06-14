@@ -1,6 +1,6 @@
 {
   pkgs,
-  jail ? pkgs.callPackage ./jail.nix { },
+  jail ? pkgs.callPackage ../pkgs/jail.nix { },
 }:
 pkgs.writeShellApplication {
   name = "jail-sigint-test";
@@ -9,5 +9,5 @@ pkgs.writeShellApplication {
     pkgs.bash
     jail
   ];
-  text = builtins.readFile ../sigint_test;
+  text = builtins.readFile ./sigint_test;
 }

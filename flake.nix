@@ -7,9 +7,9 @@
   outputs =
     inputs@{ nixpkgs, flake-parts, ... }:
     let
-      mkTestbedOptions = pkgs: import ./src/testbed_options.nix { inherit pkgs nixpkgs; };
+      mkExperimentOptions = pkgs: import ./src/testbed_options.nix { inherit pkgs nixpkgs; };
 
-      buildTestbed = import ./src/testbed_jail.nix;
+      buildExperiment = import ./src/testbed_jail.nix;
 
     in
     flake-parts.lib.mkFlake { inherit inputs; } {
@@ -24,21 +24,42 @@
           jail_pkg = pkgs.callPackage ./jail/pkgs/jail.nix { };
         in
         {
-          packages.nixnet-option-docs = import ./src/option_docs.nix { inherit pkgs mkTestbedOptions; };
+          packages.nixnet-option-docs = import ./src/option_docs.nix { inherit pkgs mkExperimentOptions; };
+          packages.jail = jail_pkg;
+
+          checks = {
+            tests = import ./tests { inherit pkgs; };
+          }
+          // lib.mapAttrs' (n: v: lib.nameValuePair "jail-${n}" v) (
+            import ./jail/tests {
+              inherit pkgs;
+              jail = jail_pkg;
+            }
+          );
 
           legacyPackages =
             let
-              baseModule = {
-                options = mkTestbedOptions pkgs;
+              common = import ./src/common.nix { inherit pkgs; };
+              baseModule = mkExperimentOptions pkgs;
+              compatModule = {
+                imports = [
+                  (common.mkRemovedOptionModule "namespaces" "has been renamed to `nodes`")
+                  (common.mkRemovedOptionModule "namespacePackages" "has been renamed to `nodePackages`")
+                ];
               };
               evalConfig =
                 networkConfig:
-                lib.evalModules {
-                  modules = [
-                    baseModule
-                    networkConfig
-                  ];
-                };
+                let
+                  result = lib.evalModules {
+                    modules = [
+                      baseModule
+                      compatModule
+                      networkConfig
+                    ];
+                  };
+                  failed = lib.filter (a: !a.assertion) result.config.assertions;
+                in
+                if failed != [ ] then throw (lib.concatMapStringsSep "\n" (a: a.message) failed) else result;
             in
             rec {
               options = (lib.evalModules { modules = [ baseModule ]; }).options;
@@ -63,7 +84,7 @@
                 "/ro-host${p}${builtins.substring 0 0 marker}";
 
               # Like pkgs.linkFarm but entries with hostBind or roHostBind paths are automatically
-              # detected and bind-mounted into namespaces at /host/... or /ro-host/..., respectively
+              # detected and bind-mounted into nodes at /host/... or /ro-host/..., respectively
               linkFarm =
                 name: entries:
                 (pkgs.linkFarm name entries).overrideAttrs (_: {
@@ -72,12 +93,15 @@
                     _binds = map (e: e.path) entries;
                   };
                 });
-              mkTestbed =
+              mkExperiment =
                 networkConfig:
-                buildTestbed {
+                buildExperiment {
                   inherit pkgs jail_pkg;
-                  tb = (evalConfig networkConfig).config;
+                  config = (evalConfig networkConfig).config;
                 };
+
+              mkTestbed = throw "nixnet: mkTestbed has been renamed to mkExperiment";
+
               mermaid = import ./src/mermaid.nix { inherit pkgs evalConfig; };
               inherit (mermaid) mkMermaid mkMermaidSvg;
             };

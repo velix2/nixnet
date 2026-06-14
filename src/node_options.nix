@@ -11,42 +11,50 @@ lib.types.submodule {
     packages = lib.mkOption {
       type = lib.types.listOf lib.types.package;
       default = [ ];
-      description = "Packages prepended to PATH for all scripts in this namespace. Takes precedence over namespacePackages.";
+      description = "Packages prepended to PATH for all scripts in this node namespace. Takes precedence over nodePackages.";
     };
     scripts = lib.mkOption {
-      default = [ ];
-      type = lib.types.listOf (
-        lib.types.submodule {
-          options = {
-            exec = lib.mkOption {
-              type = lib.types.str;
-              example = lib.literalExpression ''
-                ''''
-                  ''${pkgs.curl}/bin/curl https://example.com
-                  cat ''${nixnet.hostBind "/etc/os-release"}
-                ''''
-              '';
-              description = "Script to run in this namespace. May be multi-line.";
+      default = { };
+      apply =
+        val:
+        if builtins.isList val then
+          throw "nixnet: `scripts` has changed from a list to an attribute set. Use `scripts.name = { exec = ...; }` instead of `scripts = [{ exec = ...; }]`."
+        else
+          val;
+      type = lib.types.either (lib.types.listOf lib.types.anything) (
+        lib.types.attrsOf (
+          lib.types.submodule {
+            options = {
+              exec = lib.mkOption {
+                type = lib.types.str;
+                example = lib.literalExpression ''
+                  ''''
+                    ''${pkgs.curl}/bin/curl https://example.com
+                    cat ''${nixnet.hostBind "/etc/os-release"}
+                  ''''
+                '';
+                description = "Script to run in this node. May be multi-line.";
+              };
+              await = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Wait for this script to finish before stopping the testbed. Only applies to background scripts.";
+              };
+              foreground = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Run this script in the foreground without output redirection. Runs after all background scripts are started. Use for interactive shells or tools that require a terminal.";
+              };
             };
-            await = lib.mkOption {
-              type = lib.types.bool;
-              default = false;
-              description = "Wait for this script to finish before stopping the testbed. Only applies to background scripts.";
-            };
-            foreground = lib.mkOption {
-              type = lib.types.bool;
-              default = false;
-              description = "Run this script in the foreground without output redirection. Runs after all background scripts are started. Use for interactive shells or tools that require a terminal.";
-            };
-          };
-        }
+          }
+        )
       );
-      description = "Scripts to run in this namespace. Background scripts are launched in parallel; foreground scripts run sequentially after all background scripts are started.";
+      description = "Scripts to run in this node. The attribute key is used as the script filename. Background scripts are launched in parallel; foreground scripts run sequentially after all background scripts are started.";
     };
     workDir = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
-      default = "{namespace}";
-      description = "Working directory for this namespace. Relative to the testbed workDir if not absolute. \`{namespace}\` is replaced with the namespace name.";
+      default = "{node}";
+      description = "Working directory for this node. Relative to the testbed workDir if not absolute. \`{node}\` is replaced with the node name.";
     };
     sysctl = nixosSysctlOption;
     networking = lib.mkOption {
@@ -57,12 +65,12 @@ lib.types.submodule {
     preSetup = lib.mkOption {
       type = lib.types.str;
       default = "";
-      description = "Shell code to run inside this namespace after namespace is created. Runs after testbed preSetup. Runs as root.";
+      description = "Shell code to run inside this node namespace after it is created. Runs after testbed preSetup.";
     };
     postSetup = lib.mkOption {
       type = lib.types.str;
       default = "";
-      description = "Shell code to run inside this namespace before testbed postSetup. Runs as root.";
+      description = "Shell code to run inside this node namespace before testbed postSetup.";
     };
     shareWayland = lib.mkOption {
       type = lib.types.bool;

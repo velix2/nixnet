@@ -17,6 +17,24 @@ in
     field: sources:
     firstNonNull (map (src: if src == null then null else src.${field} or null) sources);
 
+  # Module that declares a removed option and adds an assertion when it is set.
+  mkRemovedOptionModule =
+    name: message:
+    { config, ... }:
+    {
+      options.${name} = lib.mkOption {
+        visible = false;
+        default = null;
+        type = lib.types.nullOr lib.types.anything;
+      };
+      config.assertions = [
+        {
+          assertion = config.${name} == null;
+          message = "nixnet: `${name}` ${message}";
+        }
+      ];
+    };
+
   # Merge two netem configs field-by-field: interface fields override link fields.
   resolveNetem =
     linkNetem: ifaceNetem:

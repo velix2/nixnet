@@ -1,9 +1,9 @@
-{ pkgs, mkTestbedOptions }:
+{ pkgs, mkExperimentOptions }:
 let
   lib = pkgs.lib;
   optionsDoc =
     (pkgs.nixosOptionsDoc {
-      options = (lib.evalModules { modules = [ { options = mkTestbedOptions pkgs; } ]; }).options;
+      options = (lib.evalModules { modules = [ (mkExperimentOptions pkgs) ]; }).options;
       transformOptions =
         opt:
         opt

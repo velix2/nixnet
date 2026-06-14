@@ -18,11 +18,11 @@
           nixnet = inputs'.nixnet.legacyPackages;
           starlink = inputs'.starlink.packages.default;
           config = {
-            namespacePackages = with pkgs; [
+            nodePackages = with pkgs; [
               iperf3
               coreutils
             ];
-            namespaces = {
+            nodes = {
               client = {
                 networking.interfaces.veth0.ipv4.addresses = [
                   {
@@ -31,12 +31,10 @@
                   }
                 ];
                 postSetup = "ip link set dev veth0 xdp obj ${starlink}/starlink.o sec xdp";
-                scripts = [
-                  {
-                    exec = "sleep 0.1; iperf3 -c 10.0.0.2 -t 30 --forceflush | tee stdout";
-                    await = true;
-                  }
-                ];
+                scripts.main = {
+                  exec = "sleep 0.1; iperf3 -c 10.0.0.2 -t 30 --forceflush | tee stdout";
+                  await = true;
+                };
               };
               server = {
                 networking.interfaces.veth0.ipv4.addresses = [
@@ -46,30 +44,18 @@
                   }
                 ];
                 postSetup = "ip link set dev veth0 xdp obj ${starlink}/starlink.o sec xdp";
-                scripts = [
-                  {
-                    exec = "iperf3 -s";
-                  }
-                ];
+                scripts.main.exec = "iperf3 -s";
               };
             };
-            veths = [
-              {
-                netem.delayMs = 40;
-                a = {
-                  ns = "client";
-                  iface = "veth0";
-                };
-                b = {
-                  ns = "server";
-                  iface = "veth0";
-                };
-              }
-            ];
+            veths.veth0 = {
+              netem.delayMs = 40;
+              a.node = "client";
+              b.node = "server";
+            };
           };
         in
         {
-          packages.default = nixnet.mkTestbed config;
+          packages.default = nixnet.mkExperiment config;
           packages.mermaid = nixnet.mkMermaid config;
           packages.mermaid-svg = nixnet.mkMermaidSvg config;
         };

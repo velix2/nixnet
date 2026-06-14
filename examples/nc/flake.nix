@@ -18,7 +18,7 @@
           nixnet = inputs'.nixnet.legacyPackages;
           config = {
             workDir = null;
-            namespaces = {
+            nodes = {
               sender = {
                 networking.interfaces.eth0.ipv4.addresses = [
                   {
@@ -26,14 +26,10 @@
                     prefixLength = 24;
                   }
                 ];
-                scripts = [
-                  {
-                    exec = ''
-                      sleep 0.1
-                      ${pkgs.netcat-openbsd}/bin/nc -q 0 10.0.0.2 9000 < ${./msg.txt}
-                    '';
-                  }
-                ];
+                scripts.main.exec = ''
+                  sleep 0.1
+                  ${pkgs.netcat-openbsd}/bin/nc -q 0 10.0.0.2 9000 < ${./msg.txt}
+                '';
               };
               receiver = {
                 networking.interfaces.eth0.ipv4.addresses = [
@@ -42,30 +38,20 @@
                     prefixLength = 24;
                   }
                 ];
-                scripts = [
-                  {
-                    exec = "${pkgs.netcat-openbsd}/bin/nc -l -p 9000";
-                    await = true;
-                  }
-                ];
+                scripts.main = {
+                  exec = "${pkgs.netcat-openbsd}/bin/nc -l -p 9000";
+                  await = true;
+                };
               };
             };
-            veths = [
-              {
-                a = {
-                  ns = "sender";
-                  iface = "eth0";
-                };
-                b = {
-                  ns = "receiver";
-                  iface = "eth0";
-                };
-              }
-            ];
+            veths.eth0 = {
+              a.node = "sender";
+              b.node = "receiver";
+            };
           };
         in
         {
-          packages.default = nixnet.mkTestbed config;
+          packages.default = nixnet.mkExperiment config;
           packages.mermaid = nixnet.mkMermaid config;
           packages.mermaid-svg = nixnet.mkMermaidSvg config;
         };
