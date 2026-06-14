@@ -84,5 +84,10 @@ let
   ) allScripts;
 in
 {
-  inherit nsScriptFiles tbScriptFiles launchScripts fgScripts;
+  inherit
+    nsScriptFiles
+    tbScriptFiles
+    launchScripts
+    fgScripts
+    ;
 }
