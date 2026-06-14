@@ -1,16 +1,16 @@
 {
   pkgs,
   jail_pkg,
-  tb,
+  config,
 }:
 let
   lib = pkgs.lib;
-  namespaces = tb.namespaces;
-  workDir = tb.workDir;
-  name = tb.name;
+  nodes = config.nodes;
+  workDir = config.workDir;
+  name = config.name;
   hasTemplate = workDir != null && lib.hasInfix "{run}" workDir;
   common = import ./common.nix { inherit pkgs; };
-  gen = import ./testbed_script.nix { inherit pkgs tb; };
+  gen = import ./testbed_script.nix { inherit pkgs config; };
 in
 pkgs.stdenv.mkDerivation {
   pname = name;
@@ -23,42 +23,42 @@ pkgs.stdenv.mkDerivation {
   ''
   + lib.concatStrings (
     lib.mapAttrsToList (
-      nsName: nsCfg:
+      nodeName: nodeCfg:
       lib.concatStrings (
-        lib.imap0 (
-          idx: _scriptCfg:
+        lib.mapAttrsToList (
+          scriptName: _scriptCfg:
           let
-            scriptFile = builtins.elemAt gen.nsScriptFiles.${nsName} idx;
+            scriptFile = gen.nodeScriptFiles.${nodeName}.${scriptName};
           in
           ''
-            mkdir -p $out/namespaces/${nsName}/scripts
-            install -m 0755 ${scriptFile} $out/namespaces/${nsName}/scripts/${toString idx}
+            mkdir -p $out/nodes/${nodeName}/scripts
+            install -m 0755 ${scriptFile} $out/nodes/${nodeName}/scripts/${scriptName}
           ''
-        ) nsCfg.scripts
+        ) nodeCfg.scripts
       )
-    ) namespaces
+    ) nodes
   )
   + lib.concatStrings (
-    lib.imap0 (
-      idx: _scriptCfg:
+    lib.mapAttrsToList (
+      scriptName: _scriptCfg:
       let
-        scriptFile = builtins.elemAt gen.tbScriptFiles idx;
+        scriptFile = gen.tbScriptFiles.${scriptName};
       in
       ''
         mkdir -p $out/scripts
-        install -m 0755 ${scriptFile} $out/scripts/${toString idx}
+        install -m 0755 ${scriptFile} $out/scripts/${scriptName}
       ''
-    ) tb.scripts
+    ) config.scripts
   )
   + (
     let
-      anyNsShareWayland = lib.any (ns: ns.shareWayland) (lib.attrValues namespaces);
-      anyNsSharePipeWire = lib.any (ns: ns.sharePipeWire) (lib.attrValues namespaces);
+      anyNodeShareWayland = lib.any (node: node.shareWayland) (lib.attrValues nodes);
+      anyNodeSharePipeWire = lib.any (node: node.sharePipeWire) (lib.attrValues nodes);
       jailFlags = [
         ''--setenv "PATH=$PATH"''
       ]
-      ++ lib.optional (tb.shareWayland || anyNsShareWayland) "--wayland"
-      ++ lib.optionals (tb.sharePipeWire || anyNsSharePipeWire) [
+      ++ lib.optional (config.shareWayland || anyNodeShareWayland) "--wayland"
+      ++ lib.optionals (config.sharePipeWire || anyNodeSharePipeWire) [
         ''--ro-bind "$XDG_RUNTIME_DIR/''${PIPEWIRE_REMOTE:-pipewire-0}" "/run/user/0/pipewire-0"''
         ''--ro-bind "$XDG_RUNTIME_DIR/pulse/native" "/run/user/0/pulse/native"''
         ''--setenv "XDG_RUNTIME_DIR=/run/user/0"''
@@ -83,7 +83,7 @@ pkgs.stdenv.mkDerivation {
         set -euo pipefail
 
         _PATH="" # clear path
-        ${common.mkPathLines (tb.testbedPackages ++ [ jail_pkg ])}
+        ${common.mkPathLines (config.testbedPackages ++ [ jail_pkg ])}
         export PATH="$_PATH"
 
         ${common.concatNonEmpty [

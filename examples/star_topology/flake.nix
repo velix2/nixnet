@@ -23,7 +23,7 @@
           nixnet = inputs'.nixnet.legacyPackages;
           n = 100;
           mkNode = i: {
-            namespaces.${"node${toString i}"} = {
+            nodes.${"node${toString i}"} = {
               packages = with pkgs; [ iputils ];
               networking.interfaces.${"eth${toString i}"}.ipv4.addresses = [
                 {
@@ -31,45 +31,35 @@
                   prefixLength = 24;
                 }
               ];
-              scripts = [
-                {
-                  exec =
-                    let
-                      j = (lib.mod i n) + 1;
-                      delay = i / 10.0;
-                    in
-                    ''
-                      sleep ${toString delay}
-                      ping -c 1 10.0.0.${toString j}
-                    '';
-                  await = true;
-                }
-              ];
+              scripts.main = {
+                exec =
+                  let
+                    j = (lib.mod i n) + 1;
+                    delay = i / 10.0;
+                  in
+                  ''
+                    sleep ${toString delay}
+                    ping -c 1 10.0.0.${toString j}
+                  '';
+                await = true;
+              };
             };
-            veths = [
-              {
-                a = {
-                  ns = "node${toString i}";
-                  iface = "eth${toString i}";
-                };
-                b = {
-                  ns = "br0";
-                  iface = "eth${toString i}";
-                };
-              }
-            ];
+            veths.${"eth${toString i}"} = {
+              a.node = "node${toString i}";
+              b.node = "br0";
+            };
           };
-          nodes = map mkNode (lib.range 1 n);
+          nodeList = map mkNode (lib.range 1 n);
           config = {
             arp = true;
             workDir = null;
             bridges = [ "br0" ];
-            namespaces = lib.mergeAttrsList (map (node: node.namespaces) nodes);
-            veths = lib.concatMap (node: node.veths) nodes;
+            nodes = lib.mergeAttrsList (map (node: node.nodes) nodeList);
+            veths = lib.mergeAttrsList (map (node: node.veths) nodeList);
           };
         in
         {
-          packages.default = nixnet.mkTestbed config;
+          packages.default = nixnet.mkExperiment config;
           packages.mermaid = nixnet.mkMermaid config;
           packages.mermaid-svg = nixnet.mkMermaidSvg config;
         };

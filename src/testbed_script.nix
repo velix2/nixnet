@@ -1,4 +1,4 @@
-{ pkgs, tb }:
+{ pkgs, config }:
 let
   lib = pkgs.lib;
   writeRunJson =
@@ -14,23 +14,24 @@ let
       text = builtins.readFile ./write_run_json;
     }).outPath
     + "/bin/write_run_json";
-  namespaces = tb.namespaces;
-  veths = tb.veths;
-  workDir = tb.workDir;
-  workDirEnsureEmpty = tb.workDirEnsureEmpty;
+  nodes = config.nodes;
+  veths = lib.attrValues config.veths;
+  workDir = config.workDir;
+  workDirEnsureEmpty = config.workDirEnsureEmpty;
 
-  # Find the veth that connects to a given namespace interface, or null if absent.
+  # Find the veth that connects to a given node interface, or null if absent.
   getVeth =
-    nsName: ifaceName:
+    nodeName: ifaceName:
     lib.findFirst (
-      v: (v.a.ns == nsName && v.a.iface == ifaceName) || (v.b.ns == nsName && v.b.iface == ifaceName)
+      v:
+      (v.a.node == nodeName && v.a.iface == ifaceName) || (v.b.node == nodeName && v.b.iface == ifaceName)
     ) null veths;
 
-  # Look up the interface config for a veth endpoint from its namespace, or null if absent.
-  getNsIface =
-    node:
-    if namespaces ? ${node.ns} && namespaces.${node.ns}.networking.interfaces ? ${node.iface} then
-      namespaces.${node.ns}.networking.interfaces.${node.iface}
+  # Look up the interface config for a veth endpoint from its node, or null if absent.
+  getNodeIface =
+    endpoint:
+    if nodes ? ${endpoint.node} && nodes.${endpoint.node}.networking.interfaces ? ${endpoint.iface} then
+      nodes.${endpoint.node}.networking.interfaces.${endpoint.iface}
     else
       null;
 
@@ -60,15 +61,16 @@ let
       ]
     ) veths;
 
-  # True if (ns, ifaceName) is an endpoint of any veth.
+  # True if (node, ifaceName) is an endpoint of any veth.
   isVethEndpoint =
-    ns: ifaceName:
+    node: ifaceName:
     builtins.any (
       veth:
-      (veth.a.ns == ns && veth.a.iface == ifaceName) || (veth.b.ns == ns && veth.b.iface == ifaceName)
+      (veth.a.node == node && veth.a.iface == ifaceName)
+      || (veth.b.node == node && veth.b.iface == ifaceName)
     ) veths;
 
-  nodeScripts = import ./node_script.nix { inherit pkgs tb; };
+  nodeScripts = import ./node_script.nix { inherit pkgs config; };
 
   # Extract host paths embedded via nixnet.hostBind from a string's Nix context.
   # Returns list of AttrSet { path: string; readonly: bool;}
@@ -100,31 +102,33 @@ let
     pkg:
     if pkg._nixnetLinkFarm or false then lib.concatMap extractHostBinds (pkg._binds or [ ]) else [ ];
 
-  # Auto-collected host bind paths per namespace (from script exec strings + per-namespace packages + shared packages).
-  nsAutoHostBinds = lib.mapAttrs (
-    _nsName: nsCfg:
+  # Auto-collected host bind paths per node (from script exec strings + per-node packages + shared packages).
+  nodeAutoHostBinds = lib.mapAttrs (
+    _nodeName: nodeCfg:
     lib.unique (
-      lib.concatMap (scriptCfg: extractHostBinds scriptCfg.exec) nsCfg.scripts
-      ++ lib.concatMap extractHostBindsFromPkg (nsCfg.packages ++ tb.namespacePackages)
+      lib.concatMap (scriptCfg: extractHostBinds scriptCfg.exec) (lib.attrValues nodeCfg.scripts)
+      ++ lib.concatMap extractHostBindsFromPkg (nodeCfg.packages ++ config.nodePackages)
     )
-  ) namespaces;
+  ) nodes;
 
-  # Union of all namespace auto host bind paths.
-  tbAutoHostBinds = lib.unique (lib.concatLists (lib.attrValues nsAutoHostBinds));
+  # Union of all node auto host bind paths.
+  tbAutoHostBinds = lib.unique (lib.concatLists (lib.attrValues nodeAutoHostBinds));
 
-  # Create namespaces (including bridge namespaces)
-  nsCreateCommands =
+  # Create nodes (including bridge nodes)
+  nodeCreateCommands =
     map (
       name:
       let
-        nsCfg = namespaces.${name} or null;
-        dir = lib.optionalString (nsCfg != null && nsCfg.workDir != null) (
-          builtins.replaceStrings [ "{namespace}" ] [ name ] nsCfg.workDir
+        nodeCfg = nodes.${name} or null;
+        dir = lib.optionalString (nodeCfg != null && nodeCfg.workDir != null) (
+          builtins.replaceStrings [ "{node}" ] [ name ] nodeCfg.workDir
         );
-        nsPkgs = (nsCfg.packages or [ ]) ++ tb.namespacePackages;
-        nsPathLines = mkPathLines nsPkgs;
-        wayland = lib.optionalString (nsCfg != null && (nsCfg.shareWayland or false)) " \\\n  --wayland";
-        pipewire = lib.optionalString (nsCfg != null && (nsCfg.sharePipeWire or false)) (
+        nodePkgs = (nodeCfg.packages or [ ]) ++ config.nodePackages;
+        nodePathLines = mkPathLines nodePkgs;
+        wayland = lib.optionalString (
+          nodeCfg != null && (nodeCfg.shareWayland or false)
+        ) " \\\n  --wayland";
+        pipewire = lib.optionalString (nodeCfg != null && (nodeCfg.sharePipeWire or false)) (
           " \\\n  --ro-bind \"$XDG_RUNTIME_DIR/\${PIPEWIRE_REMOTE:-pipewire-0}\" \"/run/user/0/pipewire-0\""
           + " \\\n  --ro-bind \"$XDG_RUNTIME_DIR/pulse/native\" \"/run/user/0/pulse/native\""
           + " \\\n  --setenv \"XDG_RUNTIME_DIR=/run/user/0\""
@@ -137,11 +141,11 @@ let
             " \\\n  --ro-bind '/ro-host${binding.path}' '/ro-host${binding.path}'"
           else
             " \\\n  --bind '/host${binding.path}' '/host${binding.path}'"
-        ) (nsAutoHostBinds.${name} or [ ]);
+        ) (nodeAutoHostBinds.${name} or [ ]);
       in
       lib.concatStringsSep "\n" (
         [ "_PATH=\"\" # clear path" ]
-        ++ [ nsPathLines ]
+        ++ [ nodePathLines ]
         ++ lib.optional (dir != "") "mkdir -p '${dir}'"
         ++ [
           "jail add \\\n  --setenv PATH=$_PATH${
@@ -149,38 +153,38 @@ let
           }${wayland}${pipewire}${binds} \\\n  ${name}"
         ]
       )
-    ) (lib.attrNames namespaces)
-    ++ map (name: "jail add ${name}") tb.bridges;
+    ) (lib.attrNames nodes)
+    ++ map (name: "jail add ${name}") config.bridges;
 
   # Bring loopback interfaces up
-  nsLoUpCommands = lib.mapAttrsToList (name: _: "ip netns exec ${name} ip link set lo up") namespaces;
+  nodeLoUpCommands = lib.mapAttrsToList (name: _: "ip netns exec ${name} ip link set lo up") nodes;
 
-  nsPreSetupCommands = lib.mapAttrsToList (
-    name: nsCfg:
-    lib.optionalString (nsCfg.preSetup != "") ''
-      ip netns exec ${name} bash -c ${lib.escapeShellArg nsCfg.preSetup}
+  nodePreSetupCommands = lib.mapAttrsToList (
+    nodeName: nodeCfg:
+    lib.optionalString (nodeCfg.preSetup != "") ''
+      ip netns exec ${nodeName} bash -c ${lib.escapeShellArg nodeCfg.preSetup}
     ''
-  ) namespaces;
+  ) nodes;
 
-  nsPostSetupCommands = lib.mapAttrsToList (
-    name: nsCfg:
-    lib.optionalString (nsCfg.postSetup != "") ''
-      ip netns exec ${name} bash -c ${lib.escapeShellArg nsCfg.postSetup}
+  nodePostSetupCommands = lib.mapAttrsToList (
+    nodeName: nodeCfg:
+    lib.optionalString (nodeCfg.postSetup != "") ''
+      ip netns exec ${nodeName} bash -c ${lib.escapeShellArg nodeCfg.postSetup}
     ''
-  ) namespaces;
+  ) nodes;
 
-  # Testbed-level sysctl defaults (lowest priority, can be overridden via tb.sysctl or ns.sysctl)
+  # Testbed-level sysctl defaults (lowest priority, can be overridden via config.sysctl or nodeCfg.sysctl)
   tbSysctlDefaults = {
     "net.ipv4.ping_group_range" = "0 0";
     "net.ipv4.ip_unprivileged_port_start" = 0;
   };
 
-  # Apply sysctl per namespace: tbSysctlDefaults < tb.sysctl < ns.sysctl
-  nsSysctlCommands = lib.concatLists (
+  # Apply sysctl per node: tbSysctlDefaults < config.sysctl < nodeCfg.sysctl
+  nodeSysctlCommands = lib.concatLists (
     lib.mapAttrsToList (
-      name: nsCfg:
+      nodeName: nodeCfg:
       let
-        merged = tbSysctlDefaults // tb.sysctl // nsCfg.sysctl;
+        merged = tbSysctlDefaults // config.sysctl // nodeCfg.sysctl;
       in
       lib.mapAttrsToList (
         key: value:
@@ -194,10 +198,10 @@ let
               else
                 toString value;
           in
-          "ip netns exec ${name} sysctl -w ${key}=${rendered} > /dev/null"
+          "ip netns exec ${nodeName} sysctl -w ${key}=${rendered} > /dev/null"
         )
       ) merged
-    ) namespaces
+    ) nodes
   );
 
   # Build a tc netem command string from a resolved netem config and interface.
@@ -238,22 +242,22 @@ let
   # Create veth pairs
   vethCreateCommands = map (
     veth:
-    "ip netns exec ${veth.a.ns} ip link add ${veth.a.iface} type veth peer name ${veth.b.iface} netns ${veth.b.ns}"
+    "ip netns exec ${veth.a.node} ip link add ${veth.a.iface} type veth peer name ${veth.b.iface} netns ${veth.b.node}"
   ) veths;
 
-  # All {nsName, ifaceName} pairs from networking.interfaces that are not a veth endpoint.
+  # All {nodeName, ifaceName} pairs from networking.interfaces that are not a veth endpoint.
   dummyIfaces = lib.concatLists (
     lib.mapAttrsToList (
-      nsName: nsCfg:
+      nodeName: nodeCfg:
       lib.concatMap (
-        ifaceName: lib.optional (!isVethEndpoint nsName ifaceName) { inherit nsName ifaceName; }
-      ) (lib.attrNames nsCfg.networking.interfaces)
-    ) namespaces
+        ifaceName: lib.optional (!isVethEndpoint nodeName ifaceName) { inherit nodeName ifaceName; }
+      ) (lib.attrNames nodeCfg.networking.interfaces)
+    ) nodes
   );
 
   # Create dummy interfaces for networking.interfaces entries that have no veth endpoint
   dummyCreateCommands = map (
-    { nsName, ifaceName }: "ip netns exec ${nsName} ip link add ${ifaceName} type dummy"
+    { nodeName, ifaceName }: "ip netns exec ${nodeName} ip link add ${ifaceName} type dummy"
   ) dummyIfaces;
 
   # Collect {ns, iface, addr} for all addresses of a given IP version.
@@ -261,18 +265,18 @@ let
     getAddrs:
     lib.concatLists (
       lib.mapAttrsToList (
-        name: nsCfg:
+        nodeName: nodeCfg:
         lib.concatLists (
           lib.mapAttrsToList (
             ifaceName: ifaceCfg:
             map (a: {
-              ns = name;
+              node = nodeName;
               iface = ifaceName;
               addr = "${a.address}/${toString a.prefixLength}";
             }) (getAddrs ifaceCfg)
-          ) nsCfg.networking.interfaces
+          ) nodeCfg.networking.interfaces
         )
-      ) namespaces
+      ) nodes
     );
 
   ipv4Addrs = collectAddrs (ifaceCfg: ifaceCfg.ipv4.addresses);
@@ -282,11 +286,11 @@ let
     ipCmd: addrs:
     map (
       {
-        ns,
+        node,
         iface,
         addr,
       }:
-      "ip netns exec ${ns} ${ipCmd} addr add ${addr} dev ${iface}"
+      "ip netns exec ${node} ${ipCmd} addr add ${addr} dev ${iface}"
     ) addrs;
 
   # Assign IPv4/IPv6 addresses
@@ -294,38 +298,40 @@ let
   ipv6AddrCommands = mkAddrCommands "ip -6" ipv6Addrs;
 
   # Bring veth interfaces up
-  linkIfUpCommands = mkVethPairCmds (node: "ip netns exec ${node.ns} ip link set ${node.iface} up");
+  linkIfUpCommands = mkVethPairCmds (
+    endpoint: "ip netns exec ${endpoint.node} ip link set ${endpoint.iface} up"
+  );
 
   # Bring dummy interfaces up
   dummyIfUpCommands = map (
-    { nsName, ifaceName }: "ip netns exec ${nsName} ip link set ${ifaceName} up"
+    { nodeName, ifaceName }: "ip netns exec ${nodeName} ip link set ${ifaceName} up"
   ) dummyIfaces;
 
   # Attach veth interfaces to bridge
   linkBridgeCommands = mkVethPairCmds (
-    node:
-    lib.optionalString (builtins.elem node.ns tb.bridges) "ip netns exec ${node.ns} ip link set ${node.iface} master ${node.ns}"
+    endpoint:
+    lib.optionalString (builtins.elem endpoint.node config.bridges) "ip netns exec ${endpoint.node} ip link set ${endpoint.iface} master ${endpoint.node}"
   );
 
   # Configure MTU for all interfaces from networking.interfaces
   linkMtuCommands = lib.concatLists (
     lib.mapAttrsToList (
-      nsName: nsCfg:
+      nodeName: nodeCfg:
       lib.mapAttrsToList (
         ifaceName: ifaceCfg:
         let
-          veth = getVeth nsName ifaceName;
+          veth = getVeth nodeName ifaceName;
           mtu = resolveFirst "mtu" [
             ifaceCfg
             veth
-            tb
+            config
           ];
         in
         lib.optionalString (
           mtu != null
-        ) "ip netns exec ${nsName} ip link set ${ifaceName} mtu ${toString mtu}"
-      ) nsCfg.networking.interfaces
-    ) namespaces
+        ) "ip netns exec ${nodeName} ip link set ${ifaceName} mtu ${toString mtu}"
+      ) nodeCfg.networking.interfaces
+    ) nodes
   );
 
   # Configure ARP for veth endpoints
@@ -333,19 +339,19 @@ let
     veth:
     let
       arpA = resolveFirst "arp" [
-        (getNsIface veth.a)
+        (getNodeIface veth.a)
         veth
-        tb
+        config
       ];
       arpB = resolveFirst "arp" [
-        (getNsIface veth.b)
+        (getNodeIface veth.b)
         veth
-        tb
+        config
       ];
     in
     concatNonEmpty [
-      (lib.optionalString (!arpA) "ip netns exec ${veth.a.ns} ip link set ${veth.a.iface} arp off")
-      (lib.optionalString (!arpB) "ip netns exec ${veth.b.ns} ip link set ${veth.b.iface} arp off")
+      (lib.optionalString (!arpA) "ip netns exec ${veth.a.node} ip link set ${veth.a.iface} arp off")
+      (lib.optionalString (!arpB) "ip netns exec ${veth.b.node} ip link set ${veth.b.iface} arp off")
     ]
   ) veths;
 
@@ -353,19 +359,19 @@ let
   linkNetemCommands = map (
     veth:
     let
-      ifaceA = getNsIface veth.a;
-      ifaceB = getNsIface veth.b;
+      ifaceA = getNodeIface veth.a;
+      ifaceB = getNodeIface veth.b;
     in
     concatNonEmpty [
-      (mkNetemCmd veth.a.ns (resolveNetem veth.netem (ifaceA.netem or null)) (resolveFirst "mtu" [
+      (mkNetemCmd veth.a.node (resolveNetem veth.netem (ifaceA.netem or null)) (resolveFirst "mtu" [
         ifaceA
         veth
-        tb
+        config
       ]) veth.a.iface)
-      (mkNetemCmd veth.b.ns (resolveNetem veth.netem (ifaceB.netem or null)) (resolveFirst "mtu" [
+      (mkNetemCmd veth.b.node (resolveNetem veth.netem (ifaceB.netem or null)) (resolveFirst "mtu" [
         ifaceB
         veth
-        tb
+        config
       ]) veth.b.iface)
     ]
   ) veths;
@@ -375,46 +381,46 @@ let
     veth:
     let
       arpPrefillA = resolveFirst "arpPrefill" [
-        (getNsIface veth.a)
+        (getNodeIface veth.a)
         veth
-        tb
+        config
       ];
       arpPrefillB = resolveFirst "arpPrefill" [
-        (getNsIface veth.b)
+        (getNodeIface veth.b)
         veth
-        tb
+        config
       ];
-      nsA = "ip netns exec ${veth.a.ns} ";
-      nsB = "ip netns exec ${veth.b.ns} ";
-      getIpv4s = node: (getNsIface node).ipv4.addresses or [ ];
+      nodeA = "ip netns exec ${veth.a.node} ";
+      nodeB = "ip netns exec ${veth.b.node} ";
+      getIpv4s = node: (getNodeIface node).ipv4.addresses or [ ];
       # Get MAC from peer once, then add a neigh entry for each of its IPv4 addresses.
       mkPrefill =
-        nsLocal: localIface: nsPeer: peerIface: peerAddrs:
+        nodeLocal: localIface: nodePeer: peerIface: peerAddrs:
         lib.optionalString (peerAddrs != [ ]) (
-          "_MAC=$(${nsPeer}cat /sys/class/net/${peerIface}/address)\n"
+          "_MAC=$(${nodePeer}cat /sys/class/net/${peerIface}/address)\n"
           + lib.concatStringsSep "\n" (
-            map (a: "${nsLocal}ip neigh add ${a.address} lladdr \"$_MAC\" dev ${localIface}") peerAddrs
+            map (a: "${nodeLocal}ip neigh add ${a.address} lladdr \"$_MAC\" dev ${localIface}") peerAddrs
           )
         );
     in
     concatNonEmpty [
-      (lib.optionalString arpPrefillA (mkPrefill nsA veth.a.iface nsB veth.b.iface (getIpv4s veth.b)))
-      (lib.optionalString arpPrefillB (mkPrefill nsB veth.b.iface nsA veth.a.iface (getIpv4s veth.a)))
+      (lib.optionalString arpPrefillA (mkPrefill nodeA veth.a.iface nodeB veth.b.iface (getIpv4s veth.b)))
+      (lib.optionalString arpPrefillB (mkPrefill nodeB veth.b.iface nodeA veth.a.iface (getIpv4s veth.a)))
     ]
   ) veths;
 
-  # Build per-namespace route commands for one IP version.
-  # ipCmd: "ip" or "ip -6"; getGw: nsCfg -> gw|null; getRoutes: ifaceCfg -> list
+  # Build per-node route commands for one IP version.
+  # ipCmd: "ip" or "ip -6"; getGw: nodeCfg -> gw|null; getRoutes: ifaceCfg -> list
   mkRouteCommands =
     ipCmd: getGw: getRoutes:
     lib.mapAttrsToList (
-      name: nsCfg:
+      nodeName: nodeCfg:
       let
-        gw = getGw nsCfg;
+        gw = getGw nodeCfg;
       in
       concatNonEmpty (
         lib.optional (gw != null) (
-          "ip netns exec ${name} ${ipCmd} route add default via ${gw.address}"
+          "ip netns exec ${nodeName} ${ipCmd} route add default via ${gw.address}"
           + lib.optionalString (gw.interface != null) " dev ${gw.interface}"
           + lib.optionalString (gw.source != null) " src ${gw.source}"
           + lib.optionalString (gw.metric != null) " metric ${toString gw.metric}"
@@ -424,38 +430,38 @@ let
             ifaceName: ifaceCfg:
             map (
               route:
-              "ip netns exec ${name} ${ipCmd} route add ${route.address}/${toString route.prefixLength}"
+              "ip netns exec ${nodeName} ${ipCmd} route add ${route.address}/${toString route.prefixLength}"
               + lib.optionalString (route.via or null != null) " via ${route.via}"
               + " dev ${ifaceName}"
               + lib.concatStringsSep "" (lib.mapAttrsToList (k: v: " ${k} ${v}") (route.options or { }))
             ) (getRoutes ifaceCfg)
-          ) nsCfg.networking.interfaces
+          ) nodeCfg.networking.interfaces
         )
       )
-    ) namespaces;
+    ) nodes;
 
   # Declarative IPv4/IPv6 Routing
-  ipv4RouteCommands = mkRouteCommands "ip" (nsCfg: nsCfg.networking.defaultGateway) (
+  ipv4RouteCommands = mkRouteCommands "ip" (nodeCfg: nodeCfg.networking.defaultGateway) (
     ifaceCfg: ifaceCfg.ipv4.routes
   );
-  ipv6RouteCommands = mkRouteCommands "ip -6" (nsCfg: nsCfg.networking.defaultGateway6) (
+  ipv6RouteCommands = mkRouteCommands "ip -6" (nodeCfg: nodeCfg.networking.defaultGateway6) (
     ifaceCfg: ifaceCfg.ipv6.routes
   );
 
-  # Create bridge devices inside their namespaces.
+  # Create bridge devices inside their own namespaces.
   bridgeAddCommands = map (
     brName: "ip netns exec ${brName} ip link add ${brName} type bridge stp_state 0"
-  ) tb.bridges;
+  ) config.bridges;
 
   # Set bridges to up
-  bridgeUpCommands = map (brName: "ip netns exec ${brName} ip link set ${brName} up") tb.bridges;
+  bridgeUpCommands = map (brName: "ip netns exec ${brName} ip link set ${brName} up") config.bridges;
 
   setupPhaseSections = lib.concatStringsSep "\n\n" (
     lib.filter (s: s != "") [
-      (mkBashSection "pre-setup hook" [ tb.preSetup ])
-      (mkBashSection "create namespaces" nsCreateCommands)
-      (mkBashSection "namespace pre-setup hooks" nsPreSetupCommands)
-      (mkBashSection "sysctl settings" nsSysctlCommands)
+      (mkBashSection "pre-setup hook" [ config.preSetup ])
+      (mkBashSection "create nodes" nodeCreateCommands)
+      (mkBashSection "node pre-setup hooks" nodePreSetupCommands)
+      (mkBashSection "sysctl settings" nodeSysctlCommands)
       (mkBashSection "create bridges" bridgeAddCommands)
       (mkBashSection "create veth pairs" vethCreateCommands)
       (mkBashSection "create dummy interfaces" dummyCreateCommands)
@@ -463,21 +469,21 @@ let
       (mkBashSection "assign ipv6 addresses" ipv6AddrCommands)
       (mkBashSection "attach interfaces to bridges" linkBridgeCommands)
       (mkBashSection "set bridges up" bridgeUpCommands)
-      (mkBashSection "set interfaces up" (nsLoUpCommands ++ linkIfUpCommands ++ dummyIfUpCommands))
+      (mkBashSection "set interfaces up" (nodeLoUpCommands ++ linkIfUpCommands ++ dummyIfUpCommands))
       (mkBashSection "configure mtu" linkMtuCommands)
       (mkBashSection "configure arp" linkArpCommands)
       (mkBashSection "configure netem" linkNetemCommands)
       (mkBashSection "prefill arp" linkArpPrefillCommands)
       (mkBashSection "configure ipv4 routing" ipv4RouteCommands)
       (mkBashSection "configure ipv6 routing" ipv6RouteCommands)
-      (mkBashSection "namespace post-setup hooks" nsPostSetupCommands)
-      (mkBashSection "post-setup hook" [ tb.postSetup ])
+      (mkBashSection "node post-setup hooks" nodePostSetupCommands)
+      (mkBashSection "post-setup hook" [ config.postSetup ])
     ]
   );
 
   runPhaseSections = lib.concatStringsSep "\n\n" (
     lib.filter (s: s != "") [
-      (mkBashSection "pre-run hook" [ tb.preRun ])
+      (mkBashSection "pre-run hook" [ config.preRun ])
       (mkBashSection "launch background scripts" nodeScripts.launchScripts)
       (mkBashSection "launch foreground scripts" nodeScripts.fgScripts)
       (lib.strings.trim ''
@@ -496,7 +502,7 @@ let
         [ "$_FAILED" -eq 0 ] || exit 1
         stop_pids
       '')
-      (mkBashSection "post-run hook" [ tb.postRun ])
+      (mkBashSection "post-run hook" [ config.postRun ])
     ]
   );
 
@@ -564,5 +570,6 @@ let
 in
 {
   inherit scriptText tbAutoHostBinds;
-  inherit (nodeScripts) nsScriptFiles tbScriptFiles;
+  nodeScriptFiles = nodeScripts.nsScriptFiles;
+  tbScriptFiles = nodeScripts.tbScriptFiles;
 }

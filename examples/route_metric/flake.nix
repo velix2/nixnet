@@ -19,7 +19,7 @@
           config = {
             arp = false;
             arpPrefill = true;
-            namespaces = {
+            nodes = {
               client = {
                 packages = with pkgs; [ iputils ];
                 networking.interfaces = {
@@ -56,18 +56,16 @@
                     ];
                   };
                 };
-                scripts = [
-                  {
-                    exec = ''
-                      ip route show >> ./stdout 2>&1
-                      ping -I eth1 -c 3 10.0.3.2 >> ./stdout 2>&1
-                      ip link set eth1 down
-                      ip route show >> ./stdout 2>&1
-                      ping -I eth2 -c 3 10.0.3.2 >> ./stdout 2>&1
-                    '';
-                    await = true;
-                  }
-                ];
+                scripts.main = {
+                  exec = ''
+                    ip route show >> ./stdout 2>&1
+                    ping -I eth1 -c 3 10.0.3.2 >> ./stdout 2>&1
+                    ip link set eth1 down
+                    ip route show >> ./stdout 2>&1
+                    ping -I eth2 -c 3 10.0.3.2 >> ./stdout 2>&1
+                  '';
+                  await = true;
+                };
                 workDir = "./client";
               };
               server = {
@@ -95,32 +93,18 @@
                 };
               };
             };
-            veths = [
-              {
-                a = {
-                  ns = "client";
-                  iface = "eth1";
-                };
-                b = {
-                  ns = "server";
-                  iface = "eth1";
-                };
-              }
-              {
-                a = {
-                  ns = "client";
-                  iface = "eth2";
-                };
-                b = {
-                  ns = "server";
-                  iface = "eth2";
-                };
-              }
-            ];
+            veths.eth1 = {
+              a.node = "client";
+              b.node = "server";
+            };
+            veths.eth2 = {
+              a.node = "client";
+              b.node = "server";
+            };
           };
         in
         {
-          packages.default = nixnet.mkTestbed config;
+          packages.default = nixnet.mkExperiment config;
           packages.mermaid = nixnet.mkMermaid config;
           packages.mermaid-svg = nixnet.mkMermaidSvg config;
         };

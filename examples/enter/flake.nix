@@ -19,21 +19,19 @@
           config = {
             workDir = null;
             testbedPackages = pkgs.lib.mkOptionDefault [ pkgs.gnugrep ];
-            namespaces = {
-              client = {};
+            nodes = {
+              client = { };
             };
-            scripts = [
-              {
-                foreground = true;
-                exec = ''
-                  jail enter client ps -e | tee /dev/stderr | grep -q '^\s*1\b' || { echo "init process (PID 1) not found"; exit 1; }
-                '';
-              }
-            ];
+            scripts.check-init = {
+              foreground = true;
+              exec = ''
+                jail enter client ps -e | tee /dev/stderr | grep -q '^\s*1\b' || { echo "init process (PID 1) not found"; exit 1; }
+              '';
+            };
           };
         in
         {
-          packages.default = nixnet.mkTestbed config;
+          packages.default = nixnet.mkExperiment config;
           packages.mermaid = nixnet.mkMermaid config;
           packages.mermaid-svg = nixnet.mkMermaidSvg config;
         };
