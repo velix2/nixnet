@@ -27,6 +27,7 @@ _unshare_jail() {
   export JAIL_SETENV=""
 
   while [[ "${1:-}" == --* ]]; do
+    echo "Processing Flag $1, then $2, $3"
     case "$1" in
       --wayland)        WAYLAND=true; shift ;;
       --bind)           JAIL_BINDS+="rw:${2}:${3}"$'\n'; shift 3 ;;
@@ -45,6 +46,17 @@ _unshare_jail() {
       --dev)            DEV_MOUNTS+="$2"$'\n'; shift 2 ;;
       --tmpfs)          TMPFS_MOUNTS+="$2"$'\n'; shift 2 ;;
       --clearenv)       JAIL_SETENV=""; shift ;;
+      --args)
+                        # Read nul-seperated args from FD
+                        fd_args=()
+                        while IFS= read -r -d $'\0' arg <&"$2"; do
+                          read -r -a split_args <<< "$arg"
+                          fd_args+=("${split_args[@]}")
+                        done
+                        shift 2
+                        # Add the new arguments in front of remaining arguments
+                        set -- "${fd_args[@]}" "$@"
+                        ;;
       --)               shift ; break;;
       *) echo "jail: unknown flag: $1" >&2; exit 1 ;;
     esac
