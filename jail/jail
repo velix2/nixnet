@@ -27,7 +27,6 @@ _unshare_jail() {
   export JAIL_SETENV=""
 
   while [[ "${1:-}" == --* ]]; do
-    echo "Processing Flag $1, then $2, $3"
     case "$1" in
       --wayland)        WAYLAND=true; shift ;;
       --bind)           JAIL_BINDS+="rw:${2}:${3}"$'\n'; shift 3 ;;
