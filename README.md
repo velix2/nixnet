@@ -78,6 +78,8 @@ nix run
 
 nixnet is designed for lightweight, reproducible experiments that run real application binaries directly in network namespaces — no container overhead, no Python runtime, no daemon. Nix is the only runtime dependency; all other tools including iproute2 are fetched from nixpkgs. The output is a single self-contained shell script pinned to exact package versions via Nix.
 
+Performance evaluation is available [here](https://github.com/birneee/nixnet-evaluation).
+
 ## Examples
 
 See [examples/](examples/) for inspiration. Examples can be run directly without cloning:
