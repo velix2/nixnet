@@ -34,7 +34,7 @@ let
           label = nodeName;
           scriptPath = "\"$(dirname \"$0\")/../nodes/${nodeName}/scripts/${scriptName}\"";
           exec = "jail enter ${nodeName} ";
-          inherit scriptCfg;
+          inherit scriptName scriptCfg;
         }) nodeCfg.scripts
       ) nodes
     )
@@ -42,13 +42,14 @@ let
       label = "experiment";
       scriptPath = "\"$(dirname \"$0\")/../scripts/${scriptName}\"";
       exec = "";
-      inherit scriptCfg;
+      inherit scriptName scriptCfg;
     }) config.scripts;
 
   # Launch scripts in parallel; mark awaited ones; skip foreground scripts
   launchScripts = lib.concatMap (
     {
       label,
+      scriptName,
       scriptPath,
       exec,
       scriptCfg,
@@ -61,10 +62,10 @@ let
           "  set -o pipefail"
           "  stdbuf -oL ${exec}${scriptPath} 2>&1 | sed 's/^/${label}| /'"
           ") &"
-          "echo \"${label}| PID $! started\""
-          "PIDS+=($!)"
+          "echo \"${label}| ${scriptName} (PID $!) started\""
+          "PIDS[$!]=1"
         ]
-        ++ lib.optional scriptCfg.await "WAIT_PIDS+=($!)"
+        ++ lib.optional scriptCfg.await "WAIT_PIDS[$!]=1"
       )
     )
   ) allScripts;
@@ -73,12 +74,13 @@ let
   fgScripts = lib.concatMap (
     {
       label,
+      scriptName,
       scriptPath,
       exec,
       scriptCfg,
     }:
     lib.optional scriptCfg.foreground (concatNonEmpty [
-      "echo \"${label}| start foreground script\""
+      "echo \"${label}| ${scriptName} started (foreground)\""
       "("
       "  ${exec}${scriptPath}"
       ")"

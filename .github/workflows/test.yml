@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - dev
   pull_request:
 
 jobs:
@@ -20,5 +21,5 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@v22
       - name: Configure kernel
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Run checks
-        run: nix flake check --option sandbox relaxed
+      - name: Run tests
+        run: nix run .#test

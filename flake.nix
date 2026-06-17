@@ -12,11 +12,18 @@
       buildExperiment = import ./src/testbed_jail.nix;
 
     in
-    flake-parts.lib.mkFlake { inherit inputs; } {
-      systems = [
+    flake-parts.lib.mkFlake { inherit inputs; } (
+    let
+      supportedSystems = [
         "x86_64-linux"
         "aarch64-linux"
+        "i686-linux"
       ];
+    in
+    {
+      systems = supportedSystems;
+
+      flake.supportedSystems = supportedSystems;
 
       perSystem =
         { pkgs, lib, ... }:
@@ -27,15 +34,13 @@
           packages.nixnet-option-docs = import ./src/option_docs.nix { inherit pkgs mkExperimentOptions; };
           packages.jail = jail_pkg;
 
-          checks = {
-            tests = import ./tests { inherit pkgs; };
-          }
-          // lib.mapAttrs' (n: v: lib.nameValuePair "jail-${n}" v) (
-            import ./jail/tests {
+          apps.test = {
+            type = "app";
+            program = lib.getExe (import ./src/test_runner.nix {
               inherit pkgs;
-              jail = jail_pkg;
-            }
-          );
+              testDirs = [ ./tests ./jail/tests ];
+            });
+          };
 
           legacyPackages =
             let
@@ -106,5 +111,5 @@
               inherit (mermaid) mkMermaid mkMermaidSvg;
             };
         };
-    };
+    });
 }

@@ -4,36 +4,37 @@
 set -euo pipefail
 NEW_ROOT="$(mktemp -d)"
 mount -t tmpfs tmpfs "$NEW_ROOT"
-mkdir -p "$NEW_ROOT/old_root"
-mkdir -p "$NEW_ROOT/bin"
-ln -s "$(command -v bash)" "$NEW_ROOT/bin/sh"
-mkdir -p "$NEW_ROOT/var/run/netns"
-mkdir -p "$NEW_ROOT/nix/store"
-mkdir -p "$NEW_ROOT/proc"
-mkdir -p "$NEW_ROOT/sys"
-mkdir -p "$NEW_ROOT/tmp"
-mkdir -p "$NEW_ROOT/dev"
-mkdir -p "$NEW_ROOT/root"
-mkdir -p "$NEW_ROOT/dev/pts"
-mount -t devpts devpts "$NEW_ROOT/dev/pts" -o newinstance,ptmxmode=0666
-ln -sf /dev/pts/ptmx "$NEW_ROOT/dev/ptmx"
-mkdir -p "$NEW_ROOT/dev/shm"
+mkdir -p \
+  "$NEW_ROOT/old_root" \
+  "$NEW_ROOT/bin" \
+  "$NEW_ROOT/var/run/netns" \
+  "$NEW_ROOT/nix/store" \
+  "$NEW_ROOT/proc" \
+  "$NEW_ROOT/sys" \
+  "$NEW_ROOT/tmp" \
+  "$NEW_ROOT/dev/pts" \
+  "$NEW_ROOT/dev/shm" \
+  "$NEW_ROOT/root" \
+  "$NEW_ROOT/etc"
 chmod 1777 "$NEW_ROOT/dev/shm"
+ln -s "$(command -v bash)" "$NEW_ROOT/bin/sh"
+ln -sf /dev/pts/ptmx "$NEW_ROOT/dev/ptmx"
 ln -s /proc/self/fd "$NEW_ROOT/dev/fd"
 ln -s /proc/self/fd/0 "$NEW_ROOT/dev/stdin"
 ln -s /proc/self/fd/1 "$NEW_ROOT/dev/stdout"
 ln -s /proc/self/fd/2 "$NEW_ROOT/dev/stderr"
-touch "$NEW_ROOT/dev/null"
-touch "$NEW_ROOT/dev/zero"
-touch "$NEW_ROOT/dev/urandom"
-touch "$NEW_ROOT/dev/random"
+touch \
+  "$NEW_ROOT/dev/null" \
+  "$NEW_ROOT/dev/zero" \
+  "$NEW_ROOT/dev/urandom" \
+  "$NEW_ROOT/dev/random"
+mount -t devpts devpts "$NEW_ROOT/dev/pts" -o newinstance,ptmxmode=0666
 mount --bind /dev/null "$NEW_ROOT/dev/null"
 mount --bind /dev/zero "$NEW_ROOT/dev/zero"
 mount --bind /dev/urandom "$NEW_ROOT/dev/urandom"
 mount --bind /dev/random "$NEW_ROOT/dev/random"
-mount --rbind /nix/store "$NEW_ROOT/nix/store"
+mount --bind /nix/store "$NEW_ROOT/nix/store"
 mount --rbind /sys "$NEW_ROOT/sys" # required otherwise "ip netns exec" fails inside
-mkdir -p "$NEW_ROOT/etc"
 printf "root:x:0:0:root:/root:/bin/sh\n" > "$NEW_ROOT/etc/passwd"
 printf "nobody:x:65534:65534:nobody:/var/empty:/bin/sh\n" >> "$NEW_ROOT/etc/passwd"
 printf "root:x:0:\n" > "$NEW_ROOT/etc/group"

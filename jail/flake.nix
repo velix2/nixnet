@@ -19,7 +19,6 @@
         in
         {
           packages.default = jail;
-          checks = import ./tests { inherit pkgs jail; };
         };
     };
 }
