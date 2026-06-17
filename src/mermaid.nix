@@ -12,8 +12,8 @@ let
         veth: node:
         let
           nsIface =
-            if tb.namespaces ? ${node.ns} && tb.namespaces.${node.ns}.networking.interfaces ? ${node.iface} then
-              tb.namespaces.${node.ns}.networking.interfaces.${node.iface}
+            if tb.nodes ? ${node.node} && tb.nodes.${node.node}.networking.interfaces ? ${node.iface} then
+              tb.nodes.${node.node}.networking.interfaces.${node.iface}
             else
               null;
           ipv4s = map (a: "${a.address}/${toString a.prefixLength}") (nsIface.ipv4.addresses or [ ]);
@@ -31,30 +31,30 @@ let
           )
         );
 
-      nsDecls = lib.mapAttrsToList (name: _: "    ${nodeId name}[${name}]") tb.namespaces;
+      nsDecls = lib.mapAttrsToList (name: _: "    ${nodeId name}[${name}]") tb.nodes;
 
       ifaceDecls = lib.concatLists (
         map (
           veth:
           let
-            idA = "${nodeId veth.a.iface}_${nodeId veth.a.ns}";
-            idB = "${nodeId veth.b.iface}_${nodeId veth.b.ns}";
+            idA = "${nodeId veth.a.iface}_${nodeId veth.a.node}";
+            idB = "${nodeId veth.b.iface}_${nodeId veth.b.node}";
           in
           [
             "    ${idA}@{ shape: text, label: \"${mkIfaceLabel veth veth.a}\" }"
             "    ${idB}@{ shape: text, label: \"${mkIfaceLabel veth veth.b}\" }"
           ]
-        ) tb.veths
+        ) (lib.attrValues tb.veths)
       );
 
       edgeDecls = map (
         veth:
         let
-          idA = "${nodeId veth.a.iface}_${nodeId veth.a.ns}";
-          idB = "${nodeId veth.b.iface}_${nodeId veth.b.ns}";
+          idA = "${nodeId veth.a.iface}_${nodeId veth.a.node}";
+          idB = "${nodeId veth.b.iface}_${nodeId veth.b.node}";
         in
-        "    ${nodeId veth.a.ns} --- ${idA} --- ${idB} --- ${nodeId veth.b.ns}"
-      ) tb.veths;
+        "    ${nodeId veth.a.node} --- ${idA} --- ${idB} --- ${nodeId veth.b.node}"
+      ) (lib.attrValues tb.veths);
     in
     lib.concatStringsSep "\n" ([ "graph LR" ] ++ nsDecls ++ ifaceDecls ++ edgeDecls) + "\n";
 
@@ -64,7 +64,7 @@ let
     networkConfig:
     pkgs.runCommand "topology.svg"
       {
-        buildInputs = [ pkgs.nodePackages.mermaid-cli ];
+        buildInputs = [ pkgs.mermaid-cli ];
         FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.liberation_ttf ]; };
         HOME = "/tmp";
       }
