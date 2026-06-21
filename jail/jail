@@ -222,16 +222,25 @@ _jail_exec() {
 
 _jail_add() {
   local _flags=()
-  while [[ "${1:-}" == --* ]]; do
+  local _name=""
+  while [ $# -gt 0 ]; do
     case "$1" in
       --bind|--ro-bind|--setenv|--dev-bind|--bind-try|--ro-bind-try|--symlink) _flags+=("$1" "$2" "$3"); shift 3 ;;
       --chdir|--proc|--dev|--tmpfs|--args) _flags+=("$1" "$2"); shift 2 ;;
       --wayland|--unshare-user|--unshare-net|--unshare-uts|--unshare-ipc|--unshare-cgroup|--unshare-pid|--unshare-all|--clearenv) _flags+=("$1"); shift ;;
       --)         shift ; break;;
-      *) echo "jail add: unknown flag: $1" >&2; exit 1 ;;
+      --*)        echo "jail add: unknown flag: $1" >&2; exit 1 ;;
+      *)          # If it doesn't start with '--', it's the positional argument (jail name)
+                  _name="$1"
+                  shift ;;
     esac
   done
-  local _name="$1"
+  
+  if [ -z "$_name" ]; then
+    echo "jail add: Jail name is required." >&2
+    exit 1
+  fi
+
   mkdir -p "/run/jail/$_name"
   # jail_setup writes outer init PID of jail to fifo when ready
   local _fifo="/run/jail/$_name/.pid_fifo"
