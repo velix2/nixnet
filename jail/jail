@@ -130,6 +130,7 @@ _unshare_jail() {
   exec unshare \
     --keep-caps \
     --forward-signals \
+    --kill-child=SIGKILL \
     "${user_args[@]}" \
     "${mnt_arg[@]}" \
     "${net_arg[@]}" \
@@ -224,8 +225,8 @@ _jail_add() {
   while [[ "${1:-}" == --* ]]; do
     case "$1" in
       --bind|--ro-bind|--setenv|--dev-bind|--bind-try|--ro-bind-try|--symlink) _flags+=("$1" "$2" "$3"); shift 3 ;;
-      --chdir|--proc|--dev|--tmpfs) _flags+=("$1" "$2"); shift 2 ;;
-      --wayland|--unshare-user|--unshare-net|--unshare-uts|--unshare-ipc|--unshare-cgroup|--unshare-pid|--unshare-all|--clearenv|--args) _flags+=("$1"); shift ;;
+      --chdir|--proc|--dev|--tmpfs|--args) _flags+=("$1" "$2"); shift 2 ;;
+      --wayland|--unshare-user|--unshare-net|--unshare-uts|--unshare-ipc|--unshare-cgroup|--unshare-pid|--unshare-all|--clearenv) _flags+=("$1"); shift ;;
       --)         shift ; break;;
       *) echo "jail add: unknown flag: $1" >&2; exit 1 ;;
     esac
