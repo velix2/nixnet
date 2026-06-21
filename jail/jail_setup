@@ -184,7 +184,11 @@ while IFS= read -r _entry; do
 done <<< "$JAIL_SYMLINKS"
 
 if [ -n "$NAME" ]; then
-  exec env -i --chdir "$CHDIR" "${_ENV[@]}" "$@"  # named jail: init handles signals itself
+  if [ "$NEW_SESSION" = true ]; then
+    setsid env -i --chdir "$CHDIR" "${_ENV[@]}" "$@"  # named jail: init handles signals itself
+  else
+    exec env -i --chdir "$CHDIR" "${_ENV[@]}" "$@"  # named jail: init handles signals itself
+  fi
 fi
 # Run the command via setsid so a terminal SIGINT can't reach it directly; we
 # forward signals to it as SIGTERM instead (a foreground job bypasses an INT trap
@@ -194,7 +198,14 @@ _SIGNAL=0
 # kill -- -1 signals every process in this pid namespace except us (PID 1).
 trap '_SIGNAL=130; kill -s TERM -- -1 2>/dev/null' INT
 trap '_SIGNAL=143; kill -s TERM -- -1 2>/dev/null' TERM
-setsid env -i --chdir "$CHDIR" "${_ENV[@]}" "$@" <&0 &
+
+# Only create a new session if flag is specified, otherwise run env directly
+if [ "$NEW_SESSION" = true ]; then
+    setsid env -i --chdir "$CHDIR" "${_ENV[@]}" "$@" <&0 &
+else
+    exec env -i --chdir "$CHDIR" "${_ENV[@]}" "$@" <&0 &
+fi
+
 PID=$!
 # '|| EXIT_CODE=$?' so set -e doesn't exit on the signal-killed child before the
 # grace block below runs.

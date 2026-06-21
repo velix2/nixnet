@@ -10,6 +10,9 @@ _unshare_jail() {
 
   export WAYLAND=false
 
+  export DIE_WITH_PARENT=false
+  export NEW_SESSION=false
+
   export USER_NS=false
   export NET_NS=false
   export UTS_NS=false
@@ -49,6 +52,8 @@ _unshare_jail() {
       --dev)            DEV_MOUNTS+="$2"$'\n'; shift 2 ;;
       --tmpfs)          TMPFS_MOUNTS+="$2"$'\n'; shift 2 ;;
       --clearenv)       JAIL_SETENV=""; shift ;;
+      --die-with-parent) DIE_WITH_PARENT=true; shift ;;
+      --new-session)    NEW_SESSION=true; shift ;;
       --args)
                         # Read nul-seperated args from FD
                         fd_args=()
@@ -64,6 +69,12 @@ _unshare_jail() {
       *) echo "jail: unknown flag: $1" >&2; exit 1 ;;
     esac
   done
+
+  # Kill child arg
+  local kill_child_arg=()
+  if [ "$DIE_WITH_PARENT" = true ]; then
+    kill_child_arg=("--kill-child=SIGKILL")
+  fi
 
   # User Namespace
   # Special case: compare to bwrap
@@ -130,7 +141,7 @@ _unshare_jail() {
   exec unshare \
     --keep-caps \
     --forward-signals \
-    --kill-child=SIGKILL \
+    "${kill_child_arg[@]}" \
     "${user_args[@]}" \
     "${mnt_arg[@]}" \
     "${net_arg[@]}" \
@@ -156,11 +167,12 @@ _jail_enter() {
   local _init_pid
   _init_pid="$(< "/run/jail/$_name/pid")"
 
+  echo "Debug: Entering jail '$_name' with init PID $_init_pid"
+
   local _chdir
   _chdir="$(sed -n 's/^PWD=//p' "/run/jail/$_name/env")"
 
   local _has_user_ns=false
-  _has_user_ns="$(sed -n 's/^USER_NS=//p' "/run/jail/$_name/env")"
   if [ "$_has_user_ns" = true ]; then
     local _user_arg=("--user=/run/jail/$_name/user")
     if [ "$(id -u)" -eq 0 ]; then _user_arg=(); fi
@@ -171,28 +183,28 @@ _jail_enter() {
 
   local _net_arg=()
   local _has_net_ns=false
-  _has_net_ns="$(sed -n 's/^NET_NS=//p' "/run/jail/$_name/env")"
+  [[ -e "/proc/$_init_pid/ns/net" ]] && _has_net_ns=true
   if [ "$_has_net_ns" = true ]; then
     _net_arg=("--net=/var/run/netns/$_name")
   fi
 
   local _pid_arg=()
   local _has_pid_ns=false
-  _has_pid_ns="$(sed -n 's/^PID_NS=//p' "/run/jail/$_name/env")"
+  [[ -e "/proc/$_init_pid/ns/pid" ]] && _has_pid_ns=true
   if [ "$_has_pid_ns" = true ]; then
     _pid_arg=("--pid=/proc/$_init_pid/ns/pid")
   fi
 
   local _uts_arg=()
   local _has_uts_ns=false
-  _has_uts_ns="$(sed -n 's/^UTS_NS=//p' "/run/jail/$_name/env")"
+  [[ -e "/proc/$_init_pid/ns/uts" ]] && _has_uts_ns=true
   if [ "$_has_uts_ns" = true ]; then
     _uts_arg=("--uts=/proc/$_init_pid/ns/uts")
   fi
 
   local _ipc_arg=()
   local _has_ipc_ns=false
-  _has_ipc_ns="$(sed -n 's/^IPC_NS=//p' "/run/jail/$_name/env")"
+  [[ -e "/proc/$_init_pid/ns/ipc" ]] && _has_ipc_ns=true
   if [ "$_has_ipc_ns" = true ]; then
     _ipc_arg=("--ipc=/proc/$_init_pid/ns/ipc")
   fi
@@ -227,7 +239,7 @@ _jail_add() {
     case "$1" in
       --bind|--ro-bind|--setenv|--dev-bind|--bind-try|--ro-bind-try|--symlink) _flags+=("$1" "$2" "$3"); shift 3 ;;
       --chdir|--proc|--dev|--tmpfs|--args) _flags+=("$1" "$2"); shift 2 ;;
-      --wayland|--unshare-user|--unshare-net|--unshare-uts|--unshare-ipc|--unshare-cgroup|--unshare-pid|--unshare-all|--clearenv) _flags+=("$1"); shift ;;
+      --wayland|--unshare-user|--unshare-net|--unshare-uts|--unshare-ipc|--unshare-cgroup|--unshare-pid|--unshare-all|--clearenv|--die-with-parent|--new-session) _flags+=("$1"); shift ;;
       --)         shift ; break;;
       --*)        echo "jail add: unknown flag: $1" >&2; exit 1 ;;
       *)          # If it doesn't start with '--', it's the positional argument (jail name)
