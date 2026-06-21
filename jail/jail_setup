@@ -103,6 +103,11 @@ while IFS= read -r _entry; do
   if [ "$_mode" = ro ]; then
     mount -o remount,ro,bind "$NEW_ROOT$_dst"
   fi
+
+  # edge case: if we mount /proc, we need to set temp_proc to false so we don't unmount it later
+if [[ "$_src" == /proc* ]]; then
+    _temp_proc=false
+  fi
 done <<< "$JAIL_BINDS"
 
 # TODO: can be replaced by jailnix wayland combinator
