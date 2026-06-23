@@ -4,12 +4,9 @@ let
   writeRunJson =
     (pkgs.writeShellApplication {
       name = "write_run_json";
-      runtimeInputs = with pkgs; [
-        coreutils
-        gnugrep
-        gawk
-        findutils
-        inetutils
+      runtimeInputs = [
+        pkgs.coreutils
+        busyboxMini
       ];
       text = builtins.readFile ./write_run_json;
     }).outPath
@@ -36,6 +33,7 @@ let
       null;
 
   inherit (import ./common.nix { inherit pkgs; })
+    busyboxMini
     concatNonEmpty
     mkPathLines
     resolveFirst
@@ -494,7 +492,7 @@ let
   );
 
   scriptText = ''
-    #!${pkgs.bash}/bin/bash
+    #!${pkgs.bashNonInteractive}/bin/bash
     set -o errexit
     set -o nounset
     set -o pipefail

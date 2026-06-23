@@ -1,14 +1,17 @@
 { pkgs }:
 let
+  # todo move somewhere common
+  inherit (import ../../src/common.nix { inherit pkgs; }) busyboxMini;
   deps = with pkgs; [
-    bash
+    bashNonInteractive
     coreutils
-    gnused
-    util-linux
+    util-linuxMinimal
+    busyboxMini
   ];
-  jail_init = pkgs.runCommand "jail_init" { nativeBuildInputs = [ pkgs.gcc ]; } ''
+  jail_init = pkgs.runCommand "jail_init" { nativeBuildInputs = [ pkgs.gcc pkgs.patchelf ]; } ''
     mkdir -p $out/bin
     gcc -O2 -o $out/bin/init ${../init.c}
+    patchelf --shrink-rpath $out/bin/init
   '';
   jail = pkgs.writeShellApplication {
     name = "jail";

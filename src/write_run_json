@@ -14,14 +14,14 @@ turbo_disabled="$(cat /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null 
 
 mem_total_kb="$(grep MemTotal /proc/meminfo | awk '{print $2}')"
 mem_total_mb="$(( mem_total_kb / 1024 ))"
-thp="$(cat /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null | grep -oP '\[\K[^\]]+' || echo unknown)"
+thp="$(cat /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null | sed -n 's/.*\[\(.*\)\].*/\1/p' || echo unknown)"
 
 load="$(cut -d' ' -f1-3 /proc/loadavg)"
 
 kernel="$(uname -r)"
 kernel_full="$(uname -srvm)"
 arch="$(uname -m)"
-hostname="$(hostname)"
+hostname="$(uname -n)"
 
 # Dump all scalar /proc/sys/net values, skipping per-interface conf/ and neigh/ subtrees.
 # Tries to parse value as JSON number/array, falls back to quoted string.
