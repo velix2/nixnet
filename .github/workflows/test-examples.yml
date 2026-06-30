@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - dev
   pull_request:
 
 jobs:
@@ -28,8 +29,10 @@ jobs:
           - name: msquic
           - name: star_topology
           - name: tcpdump
-          #- name: chromium # requires display
-          #- name: tmux # requires interactive terminal
+          - name: chromium
+            skip_run: true # requires display
+          - name: tmux
+            skip_run: true # requires interactive terminal
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
@@ -38,4 +41,9 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo sysctl -w kernel.perf_event_paranoid=1
       - name: Run ${{ matrix.example.name }}
+        if: ${{ !matrix.example.skip_run }}
         run: ${{ matrix.example.sudo && 'sudo $(which nix)' || 'nix' }} run ./examples/${{ matrix.example.name }} --override-input nixnet path:.
+      - name: Build ${{ matrix.example.name }} mermaid
+        run: nix build ./examples/${{ matrix.example.name }}#mermaid --override-input nixnet path:.
+      - name: Build ${{ matrix.example.name }} mermaid SVG
+        run: nix build ./examples/${{ matrix.example.name }}#mermaid-svg --override-input nixnet path:.

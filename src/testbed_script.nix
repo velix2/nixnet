@@ -4,12 +4,9 @@ let
   writeRunJson =
     (pkgs.writeShellApplication {
       name = "write_run_json";
-      runtimeInputs = with pkgs; [
-        coreutils
-        gnugrep
-        gawk
-        findutils
-        inetutils
+      runtimeInputs = [
+        pkgs.coreutils
+        busyboxMini
       ];
       text = builtins.readFile ./write_run_json;
     }).outPath
@@ -36,6 +33,7 @@ let
       null;
 
   inherit (import ./common.nix { inherit pkgs; })
+    busyboxMini
     concatNonEmpty
     mkPathLines
     resolveFirst
@@ -50,16 +48,23 @@ let
     in
     lib.optionalString (content != "") "# ${title}\n${content}";
 
-  # Generate two shell commands for both endpoints of a veth.
-  mkVethPairCmds =
-    f:
-    map (
-      veth:
-      concatNonEmpty [
-        (f veth.a)
-        (f veth.b)
-      ]
-    ) veths;
+  mkIpBatch =
+    ipCmd: ns: lines:
+    let
+      indented = "\t" + lib.replaceStrings [ "\n" ] [ "\n\t" ] lines;
+    in
+    "${ipCmd} -n ${ns} -b - <<-'EOF'\n${indented}\nEOF";
+
+  # Group {ns, bare} pairs by ns and emit one "ip -n ns -batch -" heredoc per ns.
+  mkGroupedIpBatch =
+    cmds:
+    lib.mapAttrsToList (
+      ns: entries:
+      mkIpBatch "ip" ns (lib.concatMapStringsSep "\n" (e: e.bare) entries)
+    ) (lib.groupBy (c: c.ns) cmds);
+
+  # Produce a flat list of {ns, bare} by applying f to both endpoints of every veth.
+  mkVethEndpointCmds = f: lib.concatMap (veth: f veth.a ++ f veth.b) veths;
 
   # True if (node, ifaceName) is an endpoint of any veth.
   isVethEndpoint =
@@ -157,7 +162,7 @@ let
     ++ map (name: "jail add ${name}") config.bridges;
 
   # Bring loopback interfaces up
-  nodeLoUpCommands = lib.mapAttrsToList (name: _: "ip netns exec ${name} ip link set lo up") nodes;
+  nodeLoUpCommands = lib.mapAttrsToList (name: _: { ns = name; bare = "link set lo up"; }) nodes;
 
   nodePreSetupCommands = lib.mapAttrsToList (
     nodeName: nodeCfg:
@@ -180,13 +185,11 @@ let
   };
 
   # Apply sysctl per node: tbSysctlDefaults < config.sysctl < nodeCfg.sysctl
-  nodeSysctlCommands = lib.concatLists (
-    lib.mapAttrsToList (
-      nodeName: nodeCfg:
-      let
-        merged = tbSysctlDefaults // config.sysctl // nodeCfg.sysctl;
-      in
-      lib.mapAttrsToList (
+  nodeSysctlCommands = lib.mapAttrsToList (
+    nodeName: nodeCfg:
+    let
+      merged = tbSysctlDefaults // config.sysctl // nodeCfg.sysctl;
+      pairs = lib.mapAttrsToList (
         key: value:
         lib.optionalString (value != null) (
           let
@@ -198,11 +201,14 @@ let
               else
                 toString value;
           in
-          "ip netns exec ${nodeName} sysctl -w ${key}=${rendered} > /dev/null"
+          "${key}=${rendered}"
         )
-      ) merged
-    ) nodes
-  );
+      ) merged;
+      nonEmpty = lib.filter (s: s != "") pairs;
+    in
+    lib.optionalString (nonEmpty != [ ])
+      "ip netns exec ${nodeName} sysctl -q -w \\\n  ${lib.concatStringsSep " \\\n  " nonEmpty}"
+  ) nodes;
 
   # Build a tc netem command string from a resolved netem config and interface.
   mkNetemCmd =
@@ -236,13 +242,13 @@ let
           ]
         );
       in
-      "ip netns exec ${ns} tc qdisc add dev ${dev} root netem ${params}"
+      "tc -n ${ns} qdisc add dev ${dev} root netem ${params}"
     );
 
   # Create veth pairs
   vethCreateCommands = map (
     veth:
-    "ip netns exec ${veth.a.node} ip link add ${veth.a.iface} type veth peer name ${veth.b.iface} netns ${veth.b.node}"
+    "ip -n ${veth.a.node} link add ${veth.a.iface} type veth peer name ${veth.b.iface} netns ${veth.b.node}"
   ) veths;
 
   # All {nodeName, ifaceName} pairs from networking.interfaces that are not a veth endpoint.
@@ -257,7 +263,7 @@ let
 
   # Create dummy interfaces for networking.interfaces entries that have no veth endpoint
   dummyCreateCommands = map (
-    { nodeName, ifaceName }: "ip netns exec ${nodeName} ip link add ${ifaceName} type dummy"
+    { nodeName, ifaceName }: { ns = nodeName; bare = "link add ${ifaceName} type dummy"; }
   ) dummyIfaces;
 
   # Collect {ns, iface, addr} for all addresses of a given IP version.
@@ -284,75 +290,55 @@ let
 
   mkAddrCommands =
     ipCmd: addrs:
-    map (
-      {
-        node,
-        iface,
-        addr,
-      }:
-      "ip netns exec ${node} ${ipCmd} addr add ${addr} dev ${iface}"
-    ) addrs;
+    lib.mapAttrsToList (
+      node: nodeAddrs:
+      mkIpBatch ipCmd node (lib.concatMapStringsSep "\n" (
+        { iface, addr, ... }: "addr add ${addr} dev ${iface}"
+      ) nodeAddrs)
+    ) (lib.groupBy (a: a.node) addrs);
 
   # Assign IPv4/IPv6 addresses
   ipv4AddrCommands = mkAddrCommands "ip" ipv4Addrs;
   ipv6AddrCommands = mkAddrCommands "ip -6" ipv6Addrs;
 
   # Bring veth interfaces up
-  linkIfUpCommands = mkVethPairCmds (
-    endpoint: "ip netns exec ${endpoint.node} ip link set ${endpoint.iface} up"
-  );
+  linkIfUpCommands = mkVethEndpointCmds (e: [{ ns = e.node; bare = "link set ${e.iface} up"; }]);
 
   # Bring dummy interfaces up
   dummyIfUpCommands = map (
-    { nodeName, ifaceName }: "ip netns exec ${nodeName} ip link set ${ifaceName} up"
+    { nodeName, ifaceName }: { ns = nodeName; bare = "link set ${ifaceName} up"; }
   ) dummyIfaces;
 
   # Attach veth interfaces to bridge
-  linkBridgeCommands = mkVethPairCmds (
-    endpoint:
-    lib.optionalString (builtins.elem endpoint.node config.bridges) "ip netns exec ${endpoint.node} ip link set ${endpoint.iface} master ${endpoint.node}"
+  linkBridgeCommands = mkVethEndpointCmds (
+    e: lib.optional (builtins.elem e.node config.bridges) { ns = e.node; bare = "link set ${e.iface} master ${e.node}"; }
   );
 
   # Configure MTU for all interfaces from networking.interfaces
   linkMtuCommands = lib.concatLists (
     lib.mapAttrsToList (
       nodeName: nodeCfg:
-      lib.mapAttrsToList (
-        ifaceName: ifaceCfg:
+      lib.concatMap (
+        ifaceName:
         let
+          ifaceCfg = nodeCfg.networking.interfaces.${ifaceName};
           veth = getVeth nodeName ifaceName;
-          mtu = resolveFirst "mtu" [
-            ifaceCfg
-            veth
-            config
-          ];
+          mtu = resolveFirst "mtu" [ ifaceCfg veth config ];
         in
-        lib.optionalString (
-          mtu != null
-        ) "ip netns exec ${nodeName} ip link set ${ifaceName} mtu ${toString mtu}"
-      ) nodeCfg.networking.interfaces
+        lib.optional (mtu != null) { ns = nodeName; bare = "link set ${ifaceName} mtu ${toString mtu}"; }
+      ) (lib.attrNames nodeCfg.networking.interfaces)
     ) nodes
   );
 
   # Configure ARP for veth endpoints
-  linkArpCommands = map (
+  linkArpCommands = lib.concatMap (
     veth:
     let
-      arpA = resolveFirst "arp" [
-        (getNodeIface veth.a)
-        veth
-        config
-      ];
-      arpB = resolveFirst "arp" [
-        (getNodeIface veth.b)
-        veth
-        config
-      ];
+      arpA = resolveFirst "arp" [ (getNodeIface veth.a) veth config ];
+      arpB = resolveFirst "arp" [ (getNodeIface veth.b) veth config ];
     in
-    concatNonEmpty [
-      (lib.optionalString (!arpA) "ip netns exec ${veth.a.node} ip link set ${veth.a.iface} arp off")
-      (lib.optionalString (!arpB) "ip netns exec ${veth.b.node} ip link set ${veth.b.iface} arp off")
-    ]
+    lib.optional (!arpA) { ns = veth.a.node; bare = "link set ${veth.a.iface} arp off"; }
+    ++ lib.optional (!arpB) { ns = veth.b.node; bare = "link set ${veth.b.iface} arp off"; }
   ) veths;
 
   # Configure netem for veth pairs
@@ -390,22 +376,20 @@ let
         veth
         config
       ];
-      nodeA = "ip netns exec ${veth.a.node} ";
-      nodeB = "ip netns exec ${veth.b.node} ";
       getIpv4s = node: (getNodeIface node).ipv4.addresses or [ ];
       # Get MAC from peer once, then add a neigh entry for each of its IPv4 addresses.
       mkPrefill =
-        nodeLocal: localIface: nodePeer: peerIface: peerAddrs:
+        localNs: localIface: peerNs: peerIface: peerAddrs:
         lib.optionalString (peerAddrs != [ ]) (
-          "_MAC=$(${nodePeer}cat /sys/class/net/${peerIface}/address)\n"
+          "_MAC=$(ip netns exec ${peerNs} cat /sys/class/net/${peerIface}/address)\n"
           + lib.concatStringsSep "\n" (
-            map (a: "${nodeLocal}ip neigh add ${a.address} lladdr \"$_MAC\" dev ${localIface}") peerAddrs
+            map (a: "ip -n ${localNs} neigh add ${a.address} lladdr \"$_MAC\" dev ${localIface}") peerAddrs
           )
         );
     in
     concatNonEmpty [
-      (lib.optionalString arpPrefillA (mkPrefill nodeA veth.a.iface nodeB veth.b.iface (getIpv4s veth.b)))
-      (lib.optionalString arpPrefillB (mkPrefill nodeB veth.b.iface nodeA veth.a.iface (getIpv4s veth.a)))
+      (lib.optionalString arpPrefillA (mkPrefill veth.a.node veth.a.iface veth.b.node veth.b.iface (getIpv4s veth.b)))
+      (lib.optionalString arpPrefillB (mkPrefill veth.b.node veth.b.iface veth.a.node veth.a.iface (getIpv4s veth.a)))
     ]
   ) veths;
 
@@ -417,27 +401,28 @@ let
       nodeName: nodeCfg:
       let
         gw = getGw nodeCfg;
+        lines =
+          lib.optional (gw != null) (
+            "route add default via ${gw.address}"
+            + lib.optionalString (gw.interface != null) " dev ${gw.interface}"
+            + lib.optionalString (gw.source != null) " src ${gw.source}"
+            + lib.optionalString (gw.metric != null) " metric ${toString gw.metric}"
+          )
+          ++ lib.concatLists (
+            lib.mapAttrsToList (
+              ifaceName: ifaceCfg:
+              map (
+                route:
+                "route add ${route.address}/${toString route.prefixLength}"
+                + lib.optionalString (route.via or null != null) " via ${route.via}"
+                + " dev ${ifaceName}"
+                + lib.concatStringsSep "" (lib.mapAttrsToList (k: v: " ${k} ${v}") (route.options or { }))
+              ) (getRoutes ifaceCfg)
+            ) nodeCfg.networking.interfaces
+          );
       in
-      concatNonEmpty (
-        lib.optional (gw != null) (
-          "ip netns exec ${nodeName} ${ipCmd} route add default via ${gw.address}"
-          + lib.optionalString (gw.interface != null) " dev ${gw.interface}"
-          + lib.optionalString (gw.source != null) " src ${gw.source}"
-          + lib.optionalString (gw.metric != null) " metric ${toString gw.metric}"
-        )
-        ++ lib.concatLists (
-          lib.mapAttrsToList (
-            ifaceName: ifaceCfg:
-            map (
-              route:
-              "ip netns exec ${nodeName} ${ipCmd} route add ${route.address}/${toString route.prefixLength}"
-              + lib.optionalString (route.via or null != null) " via ${route.via}"
-              + " dev ${ifaceName}"
-              + lib.concatStringsSep "" (lib.mapAttrsToList (k: v: " ${k} ${v}") (route.options or { }))
-            ) (getRoutes ifaceCfg)
-          ) nodeCfg.networking.interfaces
-        )
-      )
+      lib.optionalString (lines != [ ])
+        (mkIpBatch ipCmd nodeName (lib.concatStringsSep "\n" lines))
     ) nodes;
 
   # Declarative IPv4/IPv6 Routing
@@ -450,11 +435,11 @@ let
 
   # Create bridge devices inside their own namespaces.
   bridgeAddCommands = map (
-    brName: "ip netns exec ${brName} ip link add ${brName} type bridge stp_state 0"
+    brName: { ns = brName; bare = "link add ${brName} type bridge stp_state 0"; }
   ) config.bridges;
 
   # Set bridges to up
-  bridgeUpCommands = map (brName: "ip netns exec ${brName} ip link set ${brName} up") config.bridges;
+  bridgeUpCommands = map (brName: { ns = brName; bare = "link set ${brName} up"; }) config.bridges;
 
   setupPhaseSections = lib.concatStringsSep "\n\n" (
     lib.filter (s: s != "") [
@@ -462,16 +447,16 @@ let
       (mkBashSection "create nodes" nodeCreateCommands)
       (mkBashSection "node pre-setup hooks" nodePreSetupCommands)
       (mkBashSection "sysctl settings" nodeSysctlCommands)
-      (mkBashSection "create bridges" bridgeAddCommands)
+      (mkBashSection "create bridges" (mkGroupedIpBatch bridgeAddCommands))
       (mkBashSection "create veth pairs" vethCreateCommands)
-      (mkBashSection "create dummy interfaces" dummyCreateCommands)
+      (mkBashSection "create dummy interfaces" (mkGroupedIpBatch dummyCreateCommands))
       (mkBashSection "assign ipv4 addresses" ipv4AddrCommands)
       (mkBashSection "assign ipv6 addresses" ipv6AddrCommands)
-      (mkBashSection "attach interfaces to bridges" linkBridgeCommands)
-      (mkBashSection "set bridges up" bridgeUpCommands)
-      (mkBashSection "set interfaces up" (nodeLoUpCommands ++ linkIfUpCommands ++ dummyIfUpCommands))
-      (mkBashSection "configure mtu" linkMtuCommands)
-      (mkBashSection "configure arp" linkArpCommands)
+      (mkBashSection "attach interfaces to bridges" (mkGroupedIpBatch linkBridgeCommands))
+      (mkBashSection "set bridges up" (mkGroupedIpBatch bridgeUpCommands))
+      (mkBashSection "set interfaces up" (mkGroupedIpBatch (nodeLoUpCommands ++ linkIfUpCommands ++ dummyIfUpCommands)))
+      (mkBashSection "configure mtu" (mkGroupedIpBatch linkMtuCommands))
+      (mkBashSection "configure arp" (mkGroupedIpBatch linkArpCommands))
       (mkBashSection "configure netem" linkNetemCommands)
       (mkBashSection "prefill arp" linkArpPrefillCommands)
       (mkBashSection "configure ipv4 routing" ipv4RouteCommands)
@@ -489,15 +474,15 @@ let
       (lib.strings.trim ''
         # wait for background processes marked as await
         _FAILED=0
-        for PID in "''${WAIT_PIDS[@]}"; do
-          while kill -0 "$PID" 2>/dev/null; do
-            sleep 0.1
-          done
+        while [ "''${#WAIT_PIDS[@]}" -gt 0 ]; do
           _EXIT=0
-          wait "$PID" 2>/dev/null || _EXIT=$?
-          echo "testbed| PID $PID exited with $_EXIT"
+          _DONE=""
+          wait -np _DONE "''${!PIDS[@]}" 2>/dev/null || _EXIT=$?  # watch all PIDs so background exits are collected
+          [ -n "''${_DONE-}" ] || break
+          echo "testbed| PID $_DONE exited with $_EXIT"
           [ "$_EXIT" -eq 0 ] || _FAILED=1
-          PIDS=("''${PIDS[@]/$PID}")
+          unset "PIDS[$_DONE]"
+          unset "WAIT_PIDS[$_DONE]"
         done
         [ "$_FAILED" -eq 0 ] || exit 1
         stop_pids
@@ -507,38 +492,40 @@ let
   );
 
   scriptText = ''
-    #!${pkgs.bash}/bin/bash
+    #!${pkgs.bashNonInteractive}/bin/bash
     set -o errexit
     set -o nounset
     set -o pipefail
 
     set -m  # enable job control: each background job gets its own process group
 
-    PIDS=()
-    WAIT_PIDS=()
+    declare -A PIDS=()
+    declare -A WAIT_PIDS=()
     _FAILED=0
 
     stop_pids() {
-      for PID in "''${PIDS[@]}"; do
-        [ -n "$PID" ] || continue
-        if [ -e "/proc/$PID" ]; then
-          kill -INT -- -"$PID" 2>/dev/null || true
-          echo "testbed| PID $PID killed"
-          _deadline=$((SECONDS + 5))
-          while [ -e "/proc/$PID" ] && (( SECONDS < _deadline )); do
-            sleep 0.1
-          done
-          if [ -e "/proc/$PID" ]; then
-            kill -KILL -- -"$PID" 2>/dev/null || true
-          fi
-          wait "$PID" || true
-        else
-          _EXIT=0
-          wait "$PID" || _EXIT=$?
-          echo "testbed| PID $PID exited with $_EXIT"
-          [ "$_EXIT" -eq 0 ] || _FAILED=1
-        fi
+      local -A _remaining=()
+      for PID in "''${!PIDS[@]}"; do
+        _remaining[$PID]=1
+        kill -INT -- -"$PID" 2>/dev/null || true
+        echo "testbed| PID $PID killed"
       done
+      if [ "''${#_remaining[@]}" -gt 0 ]; then
+        ( sleep 5
+          for _p in "''${!_remaining[@]}"; do
+            kill -KILL -- -"$_p" 2>/dev/null || true
+          done
+        ) &
+        local _alarm=$!
+        while [ "''${#_remaining[@]}" -gt 0 ]; do
+          local _DONE=""
+          wait -np _DONE "''${!_remaining[@]}" 2>/dev/null || true
+          [ -n "''${_DONE-}" ] || break
+          unset "_remaining[$_DONE]"
+        done
+        kill -- -"$_alarm" 2>/dev/null || true
+        wait "$_alarm" 2>/dev/null || true
+      fi
       PIDS=()
     }
 
