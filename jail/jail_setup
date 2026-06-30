@@ -6,7 +6,6 @@ NEW_ROOT="$(mktemp -d)"
 mount -t tmpfs tmpfs "$NEW_ROOT"
 mkdir -p "$NEW_ROOT/old_root"
 
-
 mkdir -p "$NEW_ROOT/root"
 
 # /dev
@@ -33,35 +32,21 @@ while IFS= read -r _dev_dir; do
 done <<< "$DEV_MOUNTS"
 
 # /proc mounts
-_temp_proc=false
 if [ "$PID_NS" = true ]; then
   while IFS= read -r _proc_dir; do
     [ -z "$_proc_dir" ] && continue
+
     mkdir -p "$NEW_ROOT/$_proc_dir"
     mount -t proc proc "$NEW_ROOT/$_proc_dir"
   done <<< "$PROC_MOUNTS"
-
-  # Check if /proc is already a mount point (for setup purposes)
-  if ! mountpoint -q "$NEW_ROOT/proc"; then
-    mkdir -p "$NEW_ROOT/proc"
-    mount -t proc proc "$NEW_ROOT/proc"
-    _temp_proc=true
-  fi
-
 else
   # if no PID namespace, use rbind to share /proc with the host
   while IFS= read -r _proc_dir; do
     [ -z "$_proc_dir" ] && continue
+
     mkdir -p "$NEW_ROOT/$_proc_dir"
     mount --rbind /proc "$NEW_ROOT/$_proc_dir"
   done <<< "$PROC_MOUNTS"
-
-  # Check if /proc is already a mount point (for setup purposes)
-  if ! mountpoint -q "$NEW_ROOT/proc"; then
-    mkdir -p "$NEW_ROOT/proc"
-    mount --rbind /proc "$NEW_ROOT/proc"
-    _temp_proc=true
-  fi
 fi
 
 # tmpfs mounts
@@ -71,7 +56,6 @@ while IFS= read -r _tmp_dir; do
   mount -t tmpfs tmpfs "$NEW_ROOT/$_tmp_dir"
   chmod 0755 "$NEW_ROOT/$_tmp_dir" # to be in-line with bwrap's standard behavior
 done <<< "$TMPFS_MOUNTS"
-
 
 if [ "$NET_NS" = true ]; then
   mkdir -p "$NEW_ROOT/sys"
@@ -103,12 +87,38 @@ while IFS= read -r _entry; do
   if [ "$_mode" = ro ]; then
     mount -o remount,ro,bind "$NEW_ROOT$_dst"
   fi
-
-  # edge case: if we mount /proc, we need to set temp_proc to false so we don't unmount it later
-if [[ "$_src" == /proc* ]]; then
-    _temp_proc=false
-  fi
 done <<< "$JAIL_BINDS"
+
+# Ensure certain properties
+# /proc exists and is a procfs mount
+if [ ! -e "$NEW_ROOT/proc" ] || [ "$(stat -f -c %T "$NEW_ROOT/proc")" != "proc" ]; then
+  echo "jail: Error: /proc required. Mount procfs at /proc." >&2
+  exit 1
+fi
+
+# new session flag is supplied
+if [ "$NEW_SESSION" != "true" ]; then
+  echo "jail: Error: --new-session must be specified." >&2
+  exit 1
+fi
+
+# /dev/null exists
+if [ ! -e "$NEW_ROOT/dev/null" ]; then
+  echo "jail: Error: /dev/null required. Mount /dev." >&2
+  exit 1
+fi
+
+# NET_NS is enabled
+if [ "$NET_NS" != "true" ]; then
+  echo "jail: Error: --unshare-net must be specified." >&2
+  exit 1
+fi
+
+# USER_NS is enabled or user is root
+if [ "$USER_NS" != "true" ] && [ "$(id -u)" -ne 0 ]; then
+  echo "jail: Error: --unshare-user must be specified or program must be run as root." >&2
+  exit 1
+fi
 
 # TODO: can be replaced by jailnix wayland combinator
 if [ "$WAYLAND" = true ]; then
@@ -169,12 +179,6 @@ cd /
 umount -l /old_root
 rmdir /old_root
 
-# Clean up /proc only if we temporarily mounted it
-if [ "$_temp_proc" = true ]; then
-  umount -l /proc
-  rmdir /proc
-fi
-
 # Symlinks (needs to be done after pivot_root since they point to other paths in the new root)
 while IFS= read -r _entry; do
   [ -z "$_entry" ] && continue
@@ -184,11 +188,8 @@ while IFS= read -r _entry; do
 done <<< "$JAIL_SYMLINKS"
 
 if [ -n "$NAME" ]; then
-  if [ "$NEW_SESSION" = true ]; then
-    setsid env -i --chdir "$CHDIR" "${_ENV[@]}" "$@"  # named jail: init handles signals itself
-  else
-    exec env -i --chdir "$CHDIR" "${_ENV[@]}" "$@"  # named jail: init handles signals itself
-  fi
+  # Future work: Respect --new-session flag
+  setsid env -i --chdir "$CHDIR" "${_ENV[@]}" "$@"  # named jail: init handles signals itself
 fi
 # Run the command via setsid so a terminal SIGINT can't reach it directly; we
 # forward signals to it as SIGTERM instead (a foreground job bypasses an INT trap
@@ -199,12 +200,8 @@ _SIGNAL=0
 trap '_SIGNAL=130; kill -s TERM -- -1 2>/dev/null' INT
 trap '_SIGNAL=143; kill -s TERM -- -1 2>/dev/null' TERM
 
-# Only create a new session if flag is specified, otherwise run env directly
-if [ "$NEW_SESSION" = true ]; then
-    setsid env -i --chdir "$CHDIR" "${_ENV[@]}" "$@" <&0 &
-else
-    exec env -i --chdir "$CHDIR" "${_ENV[@]}" "$@" <&0 &
-fi
+# Future work: Respect --new-session flag
+setsid env -i --chdir "$CHDIR" "${_ENV[@]}" "$@" <&0 &
 
 PID=$!
 # '|| EXIT_CODE=$?' so set -e doesn't exit on the signal-killed child before the

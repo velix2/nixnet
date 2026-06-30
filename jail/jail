@@ -35,9 +35,9 @@ _unshare_jail() {
       --wayland)        WAYLAND=true; shift ;;
       --bind)           JAIL_BINDS+="rw:${2}:${3}"$'\n'; shift 3 ;;
       --ro-bind)        JAIL_BINDS+="ro:${2}:${3}"$'\n'; shift 3 ;;
-      --bind-try)       JAIL_BINDS+="rw:${2}:${3}"$'\n'; shift 3 ;; # TODO: Extend with try-logic
-      --ro-bind-try)    JAIL_BINDS+="ro:${2}:${3}"$'\n'; shift 3 ;;
-      --dev-bind)       JAIL_BINDS+="rw:${2}:${3}"$'\n'; shift 3 ;; # for now, handle dev binds as regular binds
+      --bind-try)       echo "jail: --bind-try is not implemented, use --bind instead" >&2; exit 1 ;;
+      --ro-bind-try)    echo "jail: --ro-bind-try is not implemented, use --ro-bind instead" >&2; exit 1 ;;
+      --dev-bind)       echo "jail: --dev-bind is not implemented, use --bind instead" >&2; exit 1 ;;
       --setenv)         JAIL_SETENV+="${2}=${3}"$'\n'; shift 3 ;;
       --symlink)        JAIL_SYMLINKS+="${2}:${3}"$'\n'; shift 3 ;;
       --chdir)          CHDIR="$2"; shift 2 ;;
@@ -111,7 +111,7 @@ _unshare_jail() {
     cgroup_arg=("--cgroup")
   fi
 
-  # Time Namespace - unchangeable for now
+  # Time Namespace - unchangeable for now - TODO
   local time_arg=("--time")
 
   # Mount Namespace - is always created
@@ -260,7 +260,7 @@ _jail_add() {
   _unshare_jail "$_name" "${_flags[@]}" "$(command -v init)" &
   disown
   local _init_pid
-  read -r _init_pid < "$_fifo"
+  read -r _init_pid < "$_fifo" # FIXME: If the jail_setup fails, this will block forever
   rm -f "$_fifo"
   printf '%s\n' "$_init_pid" > "/run/jail/$_name/pid"
 }
