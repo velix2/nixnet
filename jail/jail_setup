@@ -31,23 +31,17 @@ while IFS= read -r _dev_dir; do
   mount --bind /dev/random "$NEW_ROOT/$_dev_dir/random"
 done <<< "$DEV_MOUNTS"
 
+
+_has_proc_dir=false
 # /proc mounts
-if [ "$PID_NS" = true ]; then
-  while IFS= read -r _proc_dir; do
-    [ -z "$_proc_dir" ] && continue
+while IFS= read -r _proc_dir; do
+  [ -z "$_proc_dir" ] && continue
 
-    mkdir -p "$NEW_ROOT/$_proc_dir"
-    mount -t proc proc "$NEW_ROOT/$_proc_dir"
-  done <<< "$PROC_MOUNTS"
-else
-  # if no PID namespace, use rbind to share /proc with the host
-  while IFS= read -r _proc_dir; do
-    [ -z "$_proc_dir" ] && continue
+  mkdir -p "$NEW_ROOT/$_proc_dir"
+  mount -t proc proc "$NEW_ROOT/$_proc_dir"
 
-    mkdir -p "$NEW_ROOT/$_proc_dir"
-    mount --rbind /proc "$NEW_ROOT/$_proc_dir"
-  done <<< "$PROC_MOUNTS"
-fi
+  [ "$_proc_dir" = "/proc" ] && _has_proc_dir=true
+done <<< "$PROC_MOUNTS"
 
 # tmpfs mounts
 while IFS= read -r _tmp_dir; do
@@ -90,33 +84,15 @@ while IFS= read -r _entry; do
 done <<< "$JAIL_BINDS"
 
 # Ensure certain properties
-# /proc exists and is a procfs mount
-if [ ! -e "$NEW_ROOT/proc" ] || [ "$(stat -f -c %T "$NEW_ROOT/proc")" != "proc" ]; then
-  echo "jail: Error: /proc required. Mount procfs at /proc." >&2
-  exit 1
-fi
-
-# new session flag is supplied
-if [ "$NEW_SESSION" != "true" ]; then
-  echo "jail: Error: --new-session must be specified." >&2
+# own /proc exists
+if [ "$_has_proc_dir" = false ]; then
+  echo "jail: Error: /proc required. Mount new procfs at /proc." >&2
   exit 1
 fi
 
 # /dev/null exists
 if [ ! -e "$NEW_ROOT/dev/null" ]; then
   echo "jail: Error: /dev/null required. Mount /dev." >&2
-  exit 1
-fi
-
-# NET_NS is enabled
-if [ "$NET_NS" != "true" ]; then
-  echo "jail: Error: --unshare-net must be specified." >&2
-  exit 1
-fi
-
-# USER_NS is enabled or user is root
-if [ "$USER_NS" != "true" ] && [ "$(id -u)" -ne 0 ]; then
-  echo "jail: Error: --unshare-user must be specified or program must be run as root." >&2
   exit 1
 fi
 
@@ -171,7 +147,7 @@ fi
 
 pivot_root "$NEW_ROOT" "$NEW_ROOT/old_root"
 
-if [ "$HAS_USERNS" -ne 0 ] && [ "$NET_NS" = true ]; then
+if [ "$HAS_USERNS" -ne 0 ]; then
   mkdir -p "/sys"
   mount -t sysfs sysfs /sys # required for "ip netns exec" inside a user namespace
 fi

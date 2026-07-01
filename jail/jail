@@ -76,22 +76,43 @@ _unshare_jail() {
     kill_child_arg=("--kill-child=SIGKILL")
   fi
 
+
+  # Ensure certain flags are set
+  # Future work: Allow flags to be disabled and adjust behavior accordingly
+   
+   # NET_NS is enabled
+  if [ "$NET_NS" != "true" ]; then
+    echo "jail: Error: --unshare-net must be specified." >&2
+    exit 1
+  fi
+
+  # PID_NS is enabled
+  if [ "$PID_NS" != "true" ]; then
+    echo "jail: Error: --unshare-pid must be specified." >&2
+    exit 1
+  fi
+
+  # new session flag is supplied
+  if [ "$NEW_SESSION" != "true" ]; then
+    echo "jail: Error: --new-session must be specified." >&2
+    exit 1
+  fi
+
   # User Namespace
   # Special case: compare to bwrap
-  # - If user is not root, always create a user namespace
+  # - If user is not root, require a user namespace
   # - If user is root, and flag is not set, do not create a user namespace
   # - If user is root, and flag is set, create a user namespace
   local user_args=()
-  if [ "$(id -u)" -ne 0 ] || [ "$USER_NS" = true ]; then
-    export USER_NS=true
+  if [ "$USER_NS" = true ]; then
     user_args=("--user" "--map-root-user")
+  elif [ "$(id -u)" -ne 0 ]; then
+    echo "jail: Error: --unshare-user must be specified or program must be run as root." >&2
+    exit 1
   fi
 
-  # Net Namespace
-  local net_arg=()
-  if [ "$NET_NS" = true ]; then
-    net_arg=("--net")
-  fi
+  # Net Namespace - is always created
+  local net_arg=("--net")
 
   # UTS Namespace
   local uts_arg=()
@@ -117,24 +138,20 @@ _unshare_jail() {
   # Mount Namespace - is always created
   local mnt_arg=("--mount")
 
-  # PID Namespace
-  local pid_arg=()
-  if [ "$PID_NS" = true ]; then
-    pid_arg=("--pid")
-  fi
+  # PID Namespace - is always created
+  local pid_arg=("--pid")
 
   if [ -n "$NAME" ]; then
     mkdir -p "/run/jail/$NAME"
     mkdir -p "/var/run/netns"
     touch "/run/jail/$NAME/user"
     touch "/var/run/netns/$NAME"
-    if [ "$(id -u)" -ne 0 ] && [ "$USER_NS" = true ]; then
+    if [ "$USER_NS" = true ]; then
       user_args=("--user=/run/jail/$NAME/user" "--map-root-user")
     fi
 
-    if [ "$NET_NS" = true ]; then
-      net_arg=("--net=/var/run/netns/$NAME")
-    fi
+    net_arg=("--net=/var/run/netns/$NAME")
+  
   fi
 
   export HAS_USERNS=${#user_args[@]}
@@ -167,46 +184,36 @@ _jail_enter() {
   local _init_pid
   _init_pid="$(< "/run/jail/$_name/pid")"
 
-  echo "Debug: Entering jail '$_name' with init PID $_init_pid"
-
   local _chdir
   _chdir="$(sed -n 's/^PWD=//p' "/run/jail/$_name/env")"
 
-  local _has_user_ns=false
-  if [ "$_has_user_ns" = true ]; then
-    local _user_arg=("--user=/run/jail/$_name/user")
-    if [ "$(id -u)" -eq 0 ]; then _user_arg=(); fi
+  if [ -e "/run/jail/$_name/user" ]; then
+  local _user_arg=("--user=/run/jail/$_name/user")
+  else 
+    echo "jail enter: '$_name' does not have a user namespace. Enter jail as root." >&2
   fi
 
   # Mount Namespace is always created
   local _mnt_arg="--mount=/proc/$_init_pid/ns/mnt"
 
   local _net_arg=()
-  local _has_net_ns=false
-  [[ -e "/proc/$_init_pid/ns/net" ]] && _has_net_ns=true
-  if [ "$_has_net_ns" = true ]; then
+  if [ -e "/var/run/netns/$_name" ]; then
     _net_arg=("--net=/var/run/netns/$_name")
   fi
 
   local _pid_arg=()
-  local _has_pid_ns=false
-  [[ -e "/proc/$_init_pid/ns/pid" ]] && _has_pid_ns=true
-  if [ "$_has_pid_ns" = true ]; then
-    _pid_arg=("--pid=/proc/$_init_pid/ns/pid")
+  if [ "$(readlink /proc/1/ns/pid)" != "$(readlink "/proc/${_init_pid}/ns/pid")" ]; then
+    _pid_arg=("--pid=/proc/${_init_pid}/ns/pid")
   fi
 
   local _uts_arg=()
-  local _has_uts_ns=false
-  [[ -e "/proc/$_init_pid/ns/uts" ]] && _has_uts_ns=true
-  if [ "$_has_uts_ns" = true ]; then
-    _uts_arg=("--uts=/proc/$_init_pid/ns/uts")
+  if [ "$(readlink /proc/1/ns/uts)" != "$(readlink "/proc/${_init_pid}/ns/uts")" ]; then
+    _uts_arg=("--uts=/proc/${_init_pid}/ns/uts")
   fi
 
   local _ipc_arg=()
-  local _has_ipc_ns=false
-  [[ -e "/proc/$_init_pid/ns/ipc" ]] && _has_ipc_ns=true
-  if [ "$_has_ipc_ns" = true ]; then
-    _ipc_arg=("--ipc=/proc/$_init_pid/ns/ipc")
+  if [ "$(readlink /proc/1/ns/ipc)" != "$(readlink "/proc/${_init_pid}/ns/ipc")" ]; then
+    _ipc_arg=("--ipc=/proc/${_init_pid}/ns/ipc")
   fi
 
   # setpriv --pdeathsig TERM delivers SIGTERM to the entered command if its
