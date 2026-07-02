@@ -544,6 +544,11 @@ let
         exit 1
       fi
     ''}
+
+    echo "test: path is $PATH"
+
+    ls /nix/store
+
     ${lib.optionalString (workDir != null) ''
       _STORE_PATH="$(dirname "$(dirname "$0")")"
       ${writeRunJson} "$_STORE_PATH"

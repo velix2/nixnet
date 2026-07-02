@@ -2,6 +2,7 @@
   pkgs,
   jail_pkg,
   config,
+  outer-jail,
 }:
 let
   lib = pkgs.lib;
@@ -99,15 +100,15 @@ pkgs.stdenv.mkDerivation {
                 fi
                 _RUN_NUM=''${_START:-0}
                 _WORK_DIR_TPL='${workDir}'
-                _WORK_DIR="''${_WORK_DIR_TPL//\{run\}/$(printf "%02d" "$_RUN_NUM")}"
+                export _WORK_DIR="''${_WORK_DIR_TPL//\{run\}/$(printf "%02d" "$_RUN_NUM")}"
                 while [ -z "''${1:-}" ] && [ -e "$_WORK_DIR" ]; do
                   _RUN_NUM=$((_RUN_NUM+1))
                   _WORK_DIR="''${_WORK_DIR_TPL//\{run\}/$(printf "%02d" "$_RUN_NUM")}"
                 done
-              ''
+              '' # TODO: remove export from _WORK_DIR
             else
               lib.optionalString (workDir != null) ''
-                _WORK_DIR='${workDir}'
+                export _WORK_DIR='${workDir}'
               ''
           )
           (lib.optionalString (workDir != null) ''
@@ -116,10 +117,10 @@ pkgs.stdenv.mkDerivation {
         ]}
 
         _SELF="$(readlink -f "$0")"
-        exec jail exec \
-          ${lib.concatStringsSep " \\\n  " (jailFlags ++ [ "\"$(dirname \"$_SELF\")/.${name}-wrapped\"" ])}
+        ${lib.getExe' (outer-jail "testbed-jail" (pkgs.writeScriptBin "${name}-wrapped" gen.scriptText) [
+          (outer-jail.combinators.compat-translate-flags jailFlags)
+        ]) "testbed-jail"}
       ''} $out/bin/${name}
-      install -m 0755 ${pkgs.writeScript "${name}-wrapped" gen.scriptText} $out/bin/.${name}-wrapped
     ''
   );
   meta.mainProgram = name;

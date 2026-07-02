@@ -2,10 +2,11 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
+    jail-nix.url = "sourcehut:~alexdavid/jail.nix";
   };
 
   outputs =
-    inputs@{ nixpkgs, flake-parts, ... }:
+    inputs@{ nixpkgs, flake-parts, jail-nix, ... }:
     let
       mkExperimentOptions = pkgs: import ./src/testbed_options.nix { inherit pkgs nixpkgs; };
 
@@ -103,6 +104,7 @@
                 buildExperiment {
                   inherit pkgs jail_pkg;
                   config = (evalConfig networkConfig).config;
+                  outer-jail = (import ./src/jailnix-jail.nix { inherit pkgs jail_pkg jail-nix; }).outer-jail;
                 };
 
               mkTestbed = throw "nixnet: mkTestbed has been renamed to mkExperiment";
