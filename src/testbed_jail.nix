@@ -2,6 +2,7 @@
   pkgs,
   jail_pkg,
   config,
+  inner-jail,
   outer-jail,
 }:
 let
@@ -11,7 +12,7 @@ let
   name = config.name;
   hasTemplate = workDir != null && lib.hasInfix "{run}" workDir;
   common = import ./common.nix { inherit pkgs; };
-  gen = import ./testbed_script.nix { inherit pkgs config; };
+  gen = import ./testbed_script.nix { inherit pkgs inner-jail config; };
 in
 pkgs.stdenv.mkDerivation {
   pname = name;
@@ -119,6 +120,7 @@ pkgs.stdenv.mkDerivation {
         _SELF="$(readlink -f "$0")"
         ${lib.getExe' (outer-jail "testbed-jail" (pkgs.writeScriptBin "${name}-wrapped" gen.scriptText) [
           (outer-jail.combinators.compat-translate-flags jailFlags)
+          #(outer-jail.combinators.bind-node-script-files gen.nodeScriptFiles nodes)
         ]) "testbed-jail"}
       ''} $out/bin/${name}
     ''

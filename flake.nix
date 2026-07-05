@@ -105,6 +105,7 @@
                   inherit pkgs jail_pkg;
                   config = (evalConfig networkConfig).config;
                   outer-jail = (import ./src/jailnix-jail.nix { inherit pkgs jail_pkg jail-nix; }).outer-jail;
+                  inner-jail = (import ./src/jailnix-jail.nix { inherit pkgs jail_pkg jail-nix; }).inner-jail;
                 };
 
               mkTestbed = throw "nixnet: mkTestbed has been renamed to mkExperiment";

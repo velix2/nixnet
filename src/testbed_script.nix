@@ -1,4 +1,8 @@
-{ pkgs, config }:
+{
+  pkgs,
+  config,
+  inner-jail,
+}:
 let
   lib = pkgs.lib;
   writeRunJson =
@@ -59,8 +63,7 @@ let
   mkGroupedIpBatch =
     cmds:
     lib.mapAttrsToList (
-      ns: entries:
-      mkIpBatch "ip" ns (lib.concatMapStringsSep "\n" (e: e.bare) entries)
+      ns: entries: mkIpBatch "ip" ns (lib.concatMapStringsSep "\n" (e: e.bare) entries)
     ) (lib.groupBy (c: c.ns) cmds);
 
   # Produce a flat list of {ns, bare} by applying f to both endpoints of every veth.
@@ -124,6 +127,7 @@ let
     map (
       name:
       let
+        nodeJail = inner-jail name;
         nodeCfg = nodes.${name} or null;
         dir = lib.optionalString (nodeCfg != null && nodeCfg.workDir != null) (
           builtins.replaceStrings [ "{node}" ] [ name ] nodeCfg.workDir
@@ -153,16 +157,33 @@ let
         ++ [ nodePathLines ]
         ++ lib.optional (dir != "") "mkdir -p '${dir}'"
         ++ [
-          "jail add \\\n  --setenv PATH=$_PATH${
-            lib.optionalString (dir != "") " \\\n  --bind '${dir}' /pwd \\\n  --chdir /pwd"
-          }${wayland}${pipewire}${binds} \\\n  ${name}"
+          (lib.getExe' (nodeJail (
+            (map (s: nodeJail.combinators.add-path s) nodePkgs)
+            ++ [
+              (nodeJail.combinators.compat-translate-flags (
+                lib.splitString "\\\n" (
+                  lib.trim "${
+                    lib.optionalString (dir != "") " \\\n --bind ${dir} /pwd \\\n --chdir /pwd"
+                  }${wayland}${pipewire}${binds}"
+                )
+              ))
+            ]
+          )) "jail-add-${name}")
         ]
+        # ++ [
+        #   "jail add \\\n  --setenv PATH=$_PATH${
+        #     lib.optionalString (dir != "") " \\\n  --bind '${dir}' /pwd \\\n  --chdir /pwd"
+        #   }${wayland}${pipewire}${binds} \\\n  ${name}"
+        # ]
       )
     ) (lib.attrNames nodes)
     ++ map (name: "jail add ${name}") config.bridges;
 
   # Bring loopback interfaces up
-  nodeLoUpCommands = lib.mapAttrsToList (name: _: { ns = name; bare = "link set lo up"; }) nodes;
+  nodeLoUpCommands = lib.mapAttrsToList (name: _: {
+    ns = name;
+    bare = "link set lo up";
+  }) nodes;
 
   nodePreSetupCommands = lib.mapAttrsToList (
     nodeName: nodeCfg:
@@ -206,8 +227,9 @@ let
       ) merged;
       nonEmpty = lib.filter (s: s != "") pairs;
     in
-    lib.optionalString (nonEmpty != [ ])
-      "ip netns exec ${nodeName} sysctl -q -w \\\n  ${lib.concatStringsSep " \\\n  " nonEmpty}"
+    lib.optionalString (
+      nonEmpty != [ ]
+    ) "ip netns exec ${nodeName} sysctl -q -w \\\n  ${lib.concatStringsSep " \\\n  " nonEmpty}"
   ) nodes;
 
   # Build a tc netem command string from a resolved netem config and interface.
@@ -262,9 +284,10 @@ let
   );
 
   # Create dummy interfaces for networking.interfaces entries that have no veth endpoint
-  dummyCreateCommands = map (
-    { nodeName, ifaceName }: { ns = nodeName; bare = "link add ${ifaceName} type dummy"; }
-  ) dummyIfaces;
+  dummyCreateCommands = map ({ nodeName, ifaceName }: {
+    ns = nodeName;
+    bare = "link add ${ifaceName} type dummy";
+  }) dummyIfaces;
 
   # Collect {ns, iface, addr} for all addresses of a given IP version.
   collectAddrs =
@@ -292,9 +315,9 @@ let
     ipCmd: addrs:
     lib.mapAttrsToList (
       node: nodeAddrs:
-      mkIpBatch ipCmd node (lib.concatMapStringsSep "\n" (
-        { iface, addr, ... }: "addr add ${addr} dev ${iface}"
-      ) nodeAddrs)
+      mkIpBatch ipCmd node (
+        lib.concatMapStringsSep "\n" ({ iface, addr, ... }: "addr add ${addr} dev ${iface}") nodeAddrs
+      )
     ) (lib.groupBy (a: a.node) addrs);
 
   # Assign IPv4/IPv6 addresses
@@ -302,16 +325,26 @@ let
   ipv6AddrCommands = mkAddrCommands "ip -6" ipv6Addrs;
 
   # Bring veth interfaces up
-  linkIfUpCommands = mkVethEndpointCmds (e: [{ ns = e.node; bare = "link set ${e.iface} up"; }]);
+  linkIfUpCommands = mkVethEndpointCmds (e: [
+    {
+      ns = e.node;
+      bare = "link set ${e.iface} up";
+    }
+  ]);
 
   # Bring dummy interfaces up
-  dummyIfUpCommands = map (
-    { nodeName, ifaceName }: { ns = nodeName; bare = "link set ${ifaceName} up"; }
-  ) dummyIfaces;
+  dummyIfUpCommands = map ({ nodeName, ifaceName }: {
+    ns = nodeName;
+    bare = "link set ${ifaceName} up";
+  }) dummyIfaces;
 
   # Attach veth interfaces to bridge
   linkBridgeCommands = mkVethEndpointCmds (
-    e: lib.optional (builtins.elem e.node config.bridges) { ns = e.node; bare = "link set ${e.iface} master ${e.node}"; }
+    e:
+    lib.optional (builtins.elem e.node config.bridges) {
+      ns = e.node;
+      bare = "link set ${e.iface} master ${e.node}";
+    }
   );
 
   # Configure MTU for all interfaces from networking.interfaces
@@ -323,9 +356,16 @@ let
         let
           ifaceCfg = nodeCfg.networking.interfaces.${ifaceName};
           veth = getVeth nodeName ifaceName;
-          mtu = resolveFirst "mtu" [ ifaceCfg veth config ];
+          mtu = resolveFirst "mtu" [
+            ifaceCfg
+            veth
+            config
+          ];
         in
-        lib.optional (mtu != null) { ns = nodeName; bare = "link set ${ifaceName} mtu ${toString mtu}"; }
+        lib.optional (mtu != null) {
+          ns = nodeName;
+          bare = "link set ${ifaceName} mtu ${toString mtu}";
+        }
       ) (lib.attrNames nodeCfg.networking.interfaces)
     ) nodes
   );
@@ -334,11 +374,25 @@ let
   linkArpCommands = lib.concatMap (
     veth:
     let
-      arpA = resolveFirst "arp" [ (getNodeIface veth.a) veth config ];
-      arpB = resolveFirst "arp" [ (getNodeIface veth.b) veth config ];
+      arpA = resolveFirst "arp" [
+        (getNodeIface veth.a)
+        veth
+        config
+      ];
+      arpB = resolveFirst "arp" [
+        (getNodeIface veth.b)
+        veth
+        config
+      ];
     in
-    lib.optional (!arpA) { ns = veth.a.node; bare = "link set ${veth.a.iface} arp off"; }
-    ++ lib.optional (!arpB) { ns = veth.b.node; bare = "link set ${veth.b.iface} arp off"; }
+    lib.optional (!arpA) {
+      ns = veth.a.node;
+      bare = "link set ${veth.a.iface} arp off";
+    }
+    ++ lib.optional (!arpB) {
+      ns = veth.b.node;
+      bare = "link set ${veth.b.iface} arp off";
+    }
   ) veths;
 
   # Configure netem for veth pairs
@@ -388,8 +442,12 @@ let
         );
     in
     concatNonEmpty [
-      (lib.optionalString arpPrefillA (mkPrefill veth.a.node veth.a.iface veth.b.node veth.b.iface (getIpv4s veth.b)))
-      (lib.optionalString arpPrefillB (mkPrefill veth.b.node veth.b.iface veth.a.node veth.a.iface (getIpv4s veth.a)))
+      (lib.optionalString arpPrefillA (
+        mkPrefill veth.a.node veth.a.iface veth.b.node veth.b.iface (getIpv4s veth.b)
+      ))
+      (lib.optionalString arpPrefillB (
+        mkPrefill veth.b.node veth.b.iface veth.a.node veth.a.iface (getIpv4s veth.a)
+      ))
     ]
   ) veths;
 
@@ -421,8 +479,7 @@ let
             ) nodeCfg.networking.interfaces
           );
       in
-      lib.optionalString (lines != [ ])
-        (mkIpBatch ipCmd nodeName (lib.concatStringsSep "\n" lines))
+      lib.optionalString (lines != [ ]) (mkIpBatch ipCmd nodeName (lib.concatStringsSep "\n" lines))
     ) nodes;
 
   # Declarative IPv4/IPv6 Routing
@@ -434,12 +491,16 @@ let
   );
 
   # Create bridge devices inside their own namespaces.
-  bridgeAddCommands = map (
-    brName: { ns = brName; bare = "link add ${brName} type bridge stp_state 0"; }
-  ) config.bridges;
+  bridgeAddCommands = map (brName: {
+    ns = brName;
+    bare = "link add ${brName} type bridge stp_state 0";
+  }) config.bridges;
 
   # Set bridges to up
-  bridgeUpCommands = map (brName: { ns = brName; bare = "link set ${brName} up"; }) config.bridges;
+  bridgeUpCommands = map (brName: {
+    ns = brName;
+    bare = "link set ${brName} up";
+  }) config.bridges;
 
   setupPhaseSections = lib.concatStringsSep "\n\n" (
     lib.filter (s: s != "") [
@@ -454,7 +515,9 @@ let
       (mkBashSection "assign ipv6 addresses" ipv6AddrCommands)
       (mkBashSection "attach interfaces to bridges" (mkGroupedIpBatch linkBridgeCommands))
       (mkBashSection "set bridges up" (mkGroupedIpBatch bridgeUpCommands))
-      (mkBashSection "set interfaces up" (mkGroupedIpBatch (nodeLoUpCommands ++ linkIfUpCommands ++ dummyIfUpCommands)))
+      (mkBashSection "set interfaces up" (
+        mkGroupedIpBatch (nodeLoUpCommands ++ linkIfUpCommands ++ dummyIfUpCommands)
+      ))
       (mkBashSection "configure mtu" (mkGroupedIpBatch linkMtuCommands))
       (mkBashSection "configure arp" (mkGroupedIpBatch linkArpCommands))
       (mkBashSection "configure netem" linkNetemCommands)
@@ -544,10 +607,6 @@ let
         exit 1
       fi
     ''}
-
-    echo "test: path is $PATH"
-
-    ls /nix/store
 
     ${lib.optionalString (workDir != null) ''
       _STORE_PATH="$(dirname "$(dirname "$0")")"

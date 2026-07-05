@@ -32,7 +32,7 @@ let
         nodeName: nodeCfg:
         lib.mapAttrsToList (scriptName: scriptCfg: {
           label = nodeName;
-          scriptPath = "\"$(dirname \"$0\")/../nodes/${nodeName}/scripts/${scriptName}\"";
+          scriptPath = "\"${nsScriptFiles.${nodeName}.${scriptName}}\"";
           exec = "jail enter ${nodeName} ";
           inherit scriptName scriptCfg;
         }) nodeCfg.scripts
@@ -40,7 +40,7 @@ let
     )
     ++ lib.mapAttrsToList (scriptName: scriptCfg: {
       label = "experiment";
-      scriptPath = "\"$(dirname \"$0\")/../scripts/${scriptName}\"";
+      scriptPath = "\"${tbScriptFiles.${scriptName}}\"";
       exec = "";
       inherit scriptName scriptCfg;
     }) config.scripts;

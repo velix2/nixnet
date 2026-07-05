@@ -5,6 +5,7 @@
 }:
 
 let
+  lib = pkgs.lib;
   jail-exec-bin = pkgs.writeShellApplication {
     name = "jail-exec";
     runtimeInputs = [
@@ -26,7 +27,13 @@ let
         pkgs.coreutils
       ];
       text = ''
-        ${jail_pkg}/bin/jail add ${jailname} "$@"
+        _args=()
+          while [ "$1" != "--" ]; do
+            _args+=("$1")
+            shift
+          done
+
+        ${jail_pkg}/bin/jail add ${jailname} "''${_args[@]}"
       '';
     };
 in
@@ -45,8 +52,8 @@ in
             map (
               flag:
               let
-                flag_params = pkgs.lib.splitString " " flag;
-                cmd = builtins.elemAt flag_params 0;
+                flag_params = pkgs.lib.splitString " " (pkgs.lib.trim flag);
+                cmd = pkgs.lib.trim (builtins.elemAt flag_params 0);
               in
               if cmd == "--bind" then
                 unsafe-add-raw-args (
@@ -82,6 +89,23 @@ in
                 throw "outer-jail: unknown flag ${flag}"
             ) flags_list
           );
+
+        bind-node-script-files =
+          nodeScriptFiles: nodes:
+          compose (
+            lib.flatten (
+              lib.mapAttrsToList (
+                nodeName: nodeCfg:
+                lib.mapAttrsToList (
+                  scriptName: _scriptCfg:
+                  let
+                    scriptFile = nodeScriptFiles.${nodeName}.${scriptName};
+                  in
+                  (unsafe-add-raw-args "--ro-bind ${scriptFile} ${scriptFile}")
+                ) nodeCfg.scripts
+              ) nodes
+            )
+          );
       };
 
     basePermissions =
@@ -92,6 +116,9 @@ in
         (add-pkg-deps [
           jail_pkg # For calling jail add/enter from within
           pkgs.coreutils
+          pkgs.iproute2
+          pkgs.procps
+          pkgs.gnused
         ])
         bind-nix-store-runtime-closure
       ];
@@ -100,17 +127,94 @@ in
 
   inner-jail =
     jailname:
-    jail-nix.lib.extend {
-      inherit pkgs;
-      basePermissions =
-        combinators: with combinators; [
-          (unsafe-add-raw-args "--dev /dev")
-          (unsafe-add-raw-args "--proc /proc") # For jail's setup
-          bind-nix-store-runtime-closure
-          (add-pkg-deps [
-            jail_pkg # For init
-          ])
-        ];
-      bubblewrapPackage = jail-add-bin jailname;
+    let
+      baseJail = (
+        jail-nix.lib.extend {
+          inherit pkgs;
+          basePermissions =
+            combinators: with combinators; [
+              (unsafe-add-raw-args "--dev /dev")
+              (unsafe-add-raw-args "--proc /proc")
+              bind-nix-store-runtime-closure
+              (ro-bind "/nix/store/9qpv3ynpd66lvq10q4rmmsl3jx9gjnqv-testbed-script-client-main" "/nix/store/9qpv3ynpd66lvq10q4rmmsl3jx9gjnqv-testbed-script-client-main")
+              (add-pkg-deps [
+                jail_pkg
+              ])
+            ];
+          bubblewrapPackage = jail-add-bin jailname;
+
+          additionalCombinators =
+            builtinCombinators: with builtinCombinators; {
+              # Temporary compatibility layer for translating old flags to new combinators
+              # Temporary compatibility layer for translating old flags to new combinators
+              compat-translate-flags =
+                let
+                  trimQuotes = s: pkgs.lib.removePrefix "\"" (pkgs.lib.removeSuffix "\"" s);
+                in
+                flags_list:
+                let
+                  # FIX 1: Strip out any completely empty strings from the incoming list
+                  valid_flags = builtins.filter (f: pkgs.lib.trim f != "") flags_list;
+                in
+                compose (
+                  map (
+                    flag:
+                    let
+                      # FIX 2: Also filter empty splits in case there are double spaces in the string
+                      flag_params = builtins.filter (x: x != "") (pkgs.lib.splitString " " (pkgs.lib.trim flag));
+                      cmd = pkgs.lib.trim (builtins.elemAt flag_params 0);
+                    in
+                    if cmd == "--bind" then
+                      unsafe-add-raw-args (
+                        "--bind \""
+                        + (trimQuotes (builtins.elemAt flag_params 1))
+                        + "\" \""
+                        + (trimQuotes (builtins.elemAt flag_params 2))
+                        + "\""
+                      )
+                    else if cmd == "--ro-bind" then
+                      unsafe-add-raw-args (
+                        "--ro-bind \""
+                        + (trimQuotes (builtins.elemAt flag_params 1))
+                        + "\" \""
+                        + (trimQuotes (builtins.elemAt flag_params 2))
+                        + "\""
+                      )
+                    else if cmd == "--setenv" then
+                      let
+                        # Rejoin the rest of the string in case the env value contained spaces
+                        rest = builtins.concatStringsSep " " (pkgs.lib.drop 1 flag_params);
+                        setenv_args = pkgs.lib.splitString "=" (trimQuotes rest);
+                        env_name = builtins.elemAt setenv_args 0;
+                        env_value = builtins.elemAt setenv_args 1;
+                      in
+                      builtins.trace
+                        "outer-jail: translating --setenv env_name=${env_name}, env_value=${env_value} to set-env combinator"
+                        (
+                          #  set-env env_name env_value
+                          unsafe-add-raw-args "--setenv ${env_name} \"${env_value}\""
+                        )
+                    else if cmd == "--chdir" then
+                      unsafe-add-raw-args "--chdir \"${trimQuotes (builtins.elemAt flag_params 1)}\""
+                    
+                    # You may also want to support --wayland if you pass it!
+                    else if cmd == "--wayland" then
+                      unsafe-add-raw-args "--wayland"
+
+                    else
+                      # FIX 3: Added quotes so you can see trailing spaces or weird characters
+                      throw "outer-jail: unknown flag '${flag}'"
+                  ) valid_flags
+                );
+            };
+        }
+      );
+    in
+    {
+      # 1. Expose the combinators as an attribute on this set
+      combinators = baseJail.combinators;
+
+      # 2. Use __functor to make the set callable like a function
+      __functor = self: baseJail "jail-add-${jailname}" (pkgs.writeShellScriptBin "_" "");
     };
 }

@@ -77,7 +77,7 @@ while IFS= read -r _entry; do
     mkdir -p "$NEW_ROOT$(dirname "$_dst")"
     touch "$NEW_ROOT$_dst"
   fi
-  mount --bind "$_src" "$NEW_ROOT$_dst"
+  mount --bind "$(realpath "$_src")" "$NEW_ROOT$_dst"
   if [ "$_mode" = ro ]; then
     mount -o remount,ro,bind "$NEW_ROOT$_dst"
   fi
