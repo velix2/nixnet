@@ -33,14 +33,19 @@ _unshare_jail() {
   while [[ "${1:-}" == --* ]]; do
     case "$1" in
       --wayland)        WAYLAND=true; shift ;;
-      --bind)           JAIL_BINDS+="rw:${2}:${3}"$'\n'; shift 3 ;;
-      --ro-bind)        JAIL_BINDS+="ro:${2}:${3}"$'\n'; shift 3 ;;
+      --bind)           _2_sanitized="${2#[\'\"]}"; _2_sanitized="${_2_sanitized%[\'\"]}"; _3_sanitized="${3#[\'\"]}"; _3_sanitized="${_3_sanitized%[\'\"]}";
+                        JAIL_BINDS+="rw:${_2_sanitized}:${_3_sanitized}"$'\n'; shift 3 ;;
+      --ro-bind)        _2_sanitized="${2#[\'\"]}"; _2_sanitized="${_2_sanitized%[\'\"]}"; _3_sanitized="${3#[\'\"]}"; _3_sanitized="${_3_sanitized%[\'\"]}";
+                        JAIL_BINDS+="ro:${_2_sanitized}:${_3_sanitized}"$'\n'; shift 3 ;;
       --bind-try)       echo "jail: --bind-try is not implemented, use --bind instead" >&2; exit 1 ;;
       --ro-bind-try)    echo "jail: --ro-bind-try is not implemented, use --ro-bind instead" >&2; exit 1 ;;
       --dev-bind)       echo "jail: --dev-bind is not implemented, use --bind instead" >&2; exit 1 ;;
-      --setenv)         JAIL_SETENV+="${2}=${3}"$'\n'; shift 3 ;;
-      --symlink)        JAIL_SYMLINKS+="${2}:${3}"$'\n'; shift 3 ;;
-      --chdir)          CHDIR="$2"; shift 2 ;;
+      --setenv)         _2_sanitized="${2#[\'\"]}"; _2_sanitized="${_2_sanitized%[\'\"]}"; _3_sanitized="${3#[\'\"]}"; _3_sanitized="${_3_sanitized%[\'\"]}";
+                        JAIL_SETENV+="${_2_sanitized}=${_3_sanitized}"$'\n'; shift 3 ;;
+      --symlink)        _2_sanitized="${2#[\'\"]}"; _2_sanitized="${_2_sanitized%[\'\"]}"; _3_sanitized="${3#[\'\"]}"; _3_sanitized="${_3_sanitized%[\'\"]}";
+                        JAIL_SYMLINKS+="${_2_sanitized}:${_3_sanitized}"$'\n'; shift 3 ;;
+      --chdir)          _sanitized="${2#[\'\"]}"; _sanitized="${_sanitized%[\'\"]}";
+                        CHDIR="${_sanitized}"; shift 2 ;;
       --unshare-user)   USER_NS=true; shift ;;
       --unshare-net)    NET_NS=true; shift ;;
       --unshare-uts)    UTS_NS=true; shift ;;
@@ -48,9 +53,12 @@ _unshare_jail() {
       --unshare-cgroup) CGROUP_NS=true; shift ;;
       --unshare-pid)    PID_NS=true; shift ;;
       --unshare-all)    USER_NS=true; NET_NS=true; UTS_NS=true; IPC_NS=true; CGROUP_NS=true; PID_NS=true; shift ;;
-      --proc)           PROC_MOUNTS+="$2"$'\n'; shift 2 ;;
-      --dev)            DEV_MOUNTS+="$2"$'\n'; shift 2 ;;
-      --tmpfs)          TMPFS_MOUNTS+="$2"$'\n'; shift 2 ;;
+      --proc)            _sanitized="${2#[\'\"]}"; _sanitized="${_sanitized%[\'\"]}";
+                        PROC_MOUNTS="${_sanitized}"; shift 2 ;;
+      --dev)            _sanitized="${2#[\'\"]}"; _sanitized="${_sanitized%[\'\"]}";
+                        DEV_MOUNTS="${_sanitized}"; shift 2 ;;
+      --tmpfs)          _sanitized="${2#[\'\"]}"; _sanitized="${_sanitized%[\'\"]}";
+                        TMPFS_MOUNTS="${_sanitized}"; shift 2 ;;
       --clearenv)       JAIL_SETENV=""; shift ;;
       --die-with-parent) DIE_WITH_PARENT=true; shift ;;
       --new-session)    NEW_SESSION=true; shift ;;
