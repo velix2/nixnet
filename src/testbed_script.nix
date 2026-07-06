@@ -133,7 +133,6 @@ let
           builtins.replaceStrings [ "{node}" ] [ name ] nodeCfg.workDir
         );
         nodePkgs = (nodeCfg.packages or [ ]) ++ config.nodePackages;
-        nodePathLines = mkPathLines nodePkgs;
         wayland = lib.optionalString (
           nodeCfg != null && (nodeCfg.shareWayland or false)
         ) " \\\n  --wayland";
@@ -153,13 +152,12 @@ let
         ) (nodeAutoHostBinds.${name} or [ ]);
       in
       lib.concatStringsSep "\n" (
-        [ "_PATH=\"\" # clear path" ]
-        ++ [ nodePathLines ]
-        ++ lib.optional (dir != "") "mkdir -p '${dir}'"
+        lib.optional (dir != "") "mkdir -p '${dir}'"
         ++ [
           (lib.getExe' (nodeJail (
-            (map (s: nodeJail.combinators.add-path s) nodePkgs)
+            [(nodeJail.combinators.add-pkg-deps nodePkgs)]
             ++ [
+              (nodeJail.combinators.bind-node-script-files nodeScripts.nsScriptFiles nodes)
               (nodeJail.combinators.compat-translate-flags (
                 lib.splitString "\\\n" (
                   lib.trim "${

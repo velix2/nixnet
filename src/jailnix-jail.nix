@@ -89,23 +89,6 @@ in
                 throw "outer-jail: unknown flag ${flag}"
             ) flags_list
           );
-
-        bind-node-script-files =
-          nodeScriptFiles: nodes:
-          compose (
-            lib.flatten (
-              lib.mapAttrsToList (
-                nodeName: nodeCfg:
-                lib.mapAttrsToList (
-                  scriptName: _scriptCfg:
-                  let
-                    scriptFile = nodeScriptFiles.${nodeName}.${scriptName};
-                  in
-                  (unsafe-add-raw-args "--ro-bind ${scriptFile} ${scriptFile}")
-                ) nodeCfg.scripts
-              ) nodes
-            )
-          );
       };
 
     basePermissions =
@@ -136,7 +119,6 @@ in
               (unsafe-add-raw-args "--dev /dev")
               (unsafe-add-raw-args "--proc /proc")
               bind-nix-store-runtime-closure
-              (ro-bind "/nix/store/9qpv3ynpd66lvq10q4rmmsl3jx9gjnqv-testbed-script-client-main" "/nix/store/9qpv3ynpd66lvq10q4rmmsl3jx9gjnqv-testbed-script-client-main")
               (add-pkg-deps [
                 jail_pkg
               ])
@@ -196,7 +178,7 @@ in
                         )
                     else if cmd == "--chdir" then
                       unsafe-add-raw-args "--chdir \"${trimQuotes (builtins.elemAt flag_params 1)}\""
-                    
+
                     # You may also want to support --wayland if you pass it!
                     else if cmd == "--wayland" then
                       unsafe-add-raw-args "--wayland"
@@ -205,6 +187,23 @@ in
                       # FIX 3: Added quotes so you can see trailing spaces or weird characters
                       throw "outer-jail: unknown flag '${flag}'"
                   ) valid_flags
+                );
+
+              bind-node-script-files =
+                nodeScriptFiles: nodes:
+                compose (
+                  lib.flatten (
+                    lib.mapAttrsToList (
+                      nodeName: nodeCfg:
+                      lib.mapAttrsToList (
+                        scriptName: _scriptCfg:
+                        let
+                          scriptFile = nodeScriptFiles.${nodeName}.${scriptName};
+                        in
+                        (unsafe-add-raw-args "--ro-bind ${scriptFile} ${scriptFile}")
+                      ) nodeCfg.scripts
+                    ) nodes
+                  )
                 );
             };
         }
