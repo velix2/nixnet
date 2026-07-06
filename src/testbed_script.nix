@@ -157,7 +157,7 @@ let
           (lib.getExe' (nodeJail (
             [(nodeJail.combinators.add-pkg-deps nodePkgs)]
             ++ [
-              (nodeJail.combinators.bind-node-script-files nodeScripts.nsScriptFiles nodes)
+              (nodeJail.combinators.bind-node-script-files nodeScripts.nsScriptFiles name nodeCfg)
               (nodeJail.combinators.compat-translate-flags (
                 lib.splitString "\\\n" (
                   lib.trim "${
