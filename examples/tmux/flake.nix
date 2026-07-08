@@ -24,6 +24,7 @@
               nmap
               tcpdump
               tshark
+              bash
             ];
             nodes = {
               client = {
