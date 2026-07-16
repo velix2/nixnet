@@ -86,6 +86,8 @@ in
                     )
                 else if cmd == "--chdir" then
                   unsafe-add-raw-args "--chdir \"${trimQuotes (builtins.elemAt flag_params 1)}\""
+                else if cmd == "--wayland" then
+                    wayland
                 else
                   throw "outer-jail: unknown flag ${flag}"
               )
@@ -106,6 +108,7 @@ in
           pkgs.gnused
         ])
         bind-nix-store-runtime-closure
+        fake-passwd
       ];
     bubblewrapPackage = jail-exec-bin;
   };
@@ -120,6 +123,9 @@ in
             combinators: with combinators; [
               (unsafe-add-raw-args "--dev /dev")
               (unsafe-add-raw-args "--proc /proc")
+              (unsafe-add-raw-args "--tmpfs /tmp")
+              (write-text "/etc/hostname" "${jailname}\n")
+              fake-passwd
               bind-nix-store-runtime-closure
               (add-pkg-deps [
                 jail_pkg
@@ -171,6 +177,8 @@ in
                       unsafe-add-raw-args "--setenv ${env_name} \"${env_value}\""
                     else if cmd == "--chdir" then
                       unsafe-add-raw-args "--chdir \"${trimQuotes (builtins.elemAt flag_params 1)}\""
+                    else if cmd == "--wayland" then
+                        wayland
                     else
                       throw "outer-jail: unknown flag '${flag}'"
                   ) valid_flags
@@ -192,10 +200,10 @@ in
       );
     in
     {
-      # 1. Expose the combinators as an attribute on this set
+      # Expose the combinators as an attribute on this set
       combinators = baseJail.combinators;
 
-      # 2. Use __functor to make the set callable like a function
+      # Use __functor to make the set callable like a function (preserve original behavior)
       __functor = self: baseJail "jail-add-${jailname}" (pkgs.writeShellScriptBin "_" "");
     };
 }
