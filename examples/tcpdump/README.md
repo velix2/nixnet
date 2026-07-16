@@ -1,0 +1,1 @@
+Captures iperf3 traffic on both client and server with tcpdump, saving pcap files alongside throughput results.

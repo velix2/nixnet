@@ -1,0 +1,10 @@
+table inet filter {
+  chain input {
+    type filter hook input priority 0; policy drop;
+
+    iif lo accept
+    ct state established,related accept
+
+    tcp dport 8080 accept comment "allow HTTP"
+  }
+}

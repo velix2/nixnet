@@ -1,0 +1,1 @@
+Demonstrates nftables firewall rules: a server applies an input filter: allow TCP 8080, drop everything else.

@@ -1,0 +1,1 @@
+Sends ICMP pings between two nodes over a link with 50ms simulated delay.
