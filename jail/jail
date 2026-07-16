@@ -34,9 +34,9 @@ _unshare_jail() {
     case "$1" in
       --wayland)        WAYLAND=true; shift ;;
       --bind)           _2_sanitized="${2#[\'\"]}"; _2_sanitized="${_2_sanitized%[\'\"]}"; _3_sanitized="${3#[\'\"]}"; _3_sanitized="${_3_sanitized%[\'\"]}";
-                        JAIL_BINDS+="rw:${_2_sanitized}:${_3_sanitized}"$'\n'; shift 3 ;;
+                        JAIL_BINDS+="mode=rw,src=${_2_sanitized},dst=${_3_sanitized}"$'\n'; shift 3 ;;
       --ro-bind)        _2_sanitized="${2#[\'\"]}"; _2_sanitized="${_2_sanitized%[\'\"]}"; _3_sanitized="${3#[\'\"]}"; _3_sanitized="${_3_sanitized%[\'\"]}";
-                        JAIL_BINDS+="ro:${_2_sanitized}:${_3_sanitized}"$'\n'; shift 3 ;;
+                        JAIL_BINDS+="mode=ro,src=${_2_sanitized},dst=${_3_sanitized}"$'\n'; shift 3 ;;
       --bind-try)       echo "jail: --bind-try is not implemented, use --bind instead" >&2; exit 1 ;;
       --ro-bind-try)    echo "jail: --ro-bind-try is not implemented, use --ro-bind instead" >&2; exit 1 ;;
       --dev-bind)       echo "jail: --dev-bind is not implemented, use --bind instead" >&2; exit 1 ;;

@@ -69,8 +69,21 @@ fi
 # Bind mounts
 while IFS= read -r _entry; do
   [ -z "$_entry" ] && continue
-  _mode="${_entry%%:*}"; _rest="${_entry#*:}"
-  _src="${_rest%%:*}"; _dst="${_rest#*:}"
+  _mode="" _src="" _dst=""
+  
+  IFS=',' read -ra PAIRS <<< "$_entry"
+  
+  # 3. Parse the keys and values
+  for kv in "${PAIRS[@]}"; do
+    case "$kv" in
+      mode=*) _mode="${kv#*=}" ;;
+      src=*)  _src="${kv#*=}" ;;
+      dst=*)  _dst="${kv#*=}" ;;
+    esac
+  done
+
+  [ -z "$_src" ] || [ -z "$_dst" ] && { echo "jail: Error: Invalid bind mount entry: $_entry" >&2; exit 1; }
+
   if [ -d "$_src" ]; then
     mkdir -p "$NEW_ROOT$_dst"
   else
