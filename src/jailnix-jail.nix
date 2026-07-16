@@ -106,6 +106,7 @@ in
           pkgs.iproute2
           pkgs.procps
           pkgs.gnused
+          pkgs.bash # For post setup hook
         ])
         bind-nix-store-runtime-closure
         fake-passwd
