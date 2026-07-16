@@ -1,0 +1,1 @@
+Three-node topology (client → router → server) with IP forwarding, measuring TCP throughput with iperf3 over a 50ms link.

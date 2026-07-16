@@ -1,0 +1,1 @@
+Attaches a Starlink XDP eBPF emulator to both nodes and measures throughput with iperf3 over a 40ms link.

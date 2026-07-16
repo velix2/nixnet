@@ -1,0 +1,1 @@
+100 nodes connected to a central bridge, each pinging the next in a ring to stress-test the testbed at scale.

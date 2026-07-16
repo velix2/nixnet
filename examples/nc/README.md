@@ -1,0 +1,1 @@
+Sends a text file from a sender to a receiver over TCP using netcat.

@@ -1,0 +1,1 @@
+Demonstrates route metric-based failover: routes traffic over a primary path (metric 100), takes it down, and verifies automatic failover to the secondary path (metric 200).
