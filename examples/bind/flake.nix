@@ -17,6 +17,7 @@
             nodePackages = [
               pkgs.coreutils
               pkgs.file
+              pkgs.bash
               (linkFarm "host-tools" [
                 {
                   name = "bin/sh";

@@ -23,9 +23,10 @@
                     prefixLength = 24;
                   }
                 ];
+                packages = [ pkgs.netcat-openbsd ];
                 scripts.main.exec = ''
                   sleep 0.1
-                  ${pkgs.netcat-openbsd}/bin/nc -q 0 10.0.0.2 9000 < ${./msg.txt}
+                  ${pkgs.netcat-openbsd}/bin/nc -q 0 10.0.0.2 9000 < ${inputs'.nixnet.legacyPackages.roHostBind "./msg.txt"}
                 '';
               };
               receiver = {
@@ -35,6 +36,7 @@
                     prefixLength = 24;
                   }
                 ];
+                packages = [ pkgs.netcat-openbsd ];
                 scripts.main = {
                   exec = "${pkgs.netcat-openbsd}/bin/nc -l -p 9000";
                   await = true;

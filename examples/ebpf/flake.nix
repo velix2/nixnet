@@ -18,6 +18,7 @@
             nodePackages = with pkgs; [
               iperf3
               coreutils
+              starlink
             ];
             nodes = {
               client = {

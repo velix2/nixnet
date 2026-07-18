@@ -20,6 +20,7 @@
             arpPrefill = true;
             nodePackages = with pkgs; [
               inputs'.quiche_perf.packages.default
+              inputs'.test-certs.packages.default
               coreutils
             ];
             nodes = {

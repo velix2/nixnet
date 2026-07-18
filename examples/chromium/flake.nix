@@ -24,7 +24,7 @@
             nodes = {
               client = {
                 shareWayland = true;
-                packages = with pkgs; [ chromium ];
+                packages = with pkgs; [ chromium certs fontsConf ];
                 networking.interfaces.veth0.ipv4.addresses = [
                   {
                     address = "10.0.0.1";
@@ -44,7 +44,7 @@
                 };
               };
               server = {
-                packages = with pkgs; [ nginx ];
+                packages = with pkgs; [ nginx certs ];
                 networking.interfaces.veth0.ipv4.addresses = [
                   {
                     address = "10.0.0.2";
