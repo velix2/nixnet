@@ -4,9 +4,12 @@
 set -euo pipefail
 NEW_ROOT="$(mktemp -d)"
 mount -t tmpfs tmpfs "$NEW_ROOT"
-mkdir -p "$NEW_ROOT/old_root"
+mkdir -p "$NEW_ROOT/old_root" \
+  "$NEW_ROOT/root" \
+  "$NEW_ROOT/bin" 
 
-mkdir -p "$NEW_ROOT/root"
+# symlink /bin/sh
+ln -s "$(command -v bash)" "$NEW_ROOT/bin/sh"
 
 # /dev
 while IFS= read -r _dev_dir; do
