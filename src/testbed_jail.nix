@@ -56,10 +56,7 @@ pkgs.stdenv.mkDerivation {
     let
       anyNodeShareWayland = lib.any (node: node.shareWayland) (lib.attrValues nodes);
       anyNodeSharePipeWire = lib.any (node: node.sharePipeWire) (lib.attrValues nodes);
-      jailFlags = [
-        ''--setenv "PATH=$PATH"''
-      ]
-      ++ lib.optional (config.shareWayland || anyNodeShareWayland) "--wayland"
+      jailFlags = lib.optional (config.shareWayland || anyNodeShareWayland) "--wayland"
       ++ lib.optionals (config.sharePipeWire || anyNodeSharePipeWire) [
         ''--ro-bind "$XDG_RUNTIME_DIR/''${PIPEWIRE_REMOTE:-pipewire-0}" "/run/user/0/pipewire-0"''
         ''--ro-bind "$XDG_RUNTIME_DIR/pulse/native" "/run/user/0/pulse/native"''
@@ -83,10 +80,6 @@ pkgs.stdenv.mkDerivation {
       install -m 0755 ${pkgs.writeScript name ''
         #!${pkgs.bashNonInteractive}/bin/bash
         set -euo pipefail
-
-        _PATH="" # clear path
-        ${common.mkPathLines (config.testbedPackages ++ [ jail_pkg ])}
-        export PATH="$_PATH"
 
         ${common.concatNonEmpty [
           (
@@ -120,7 +113,7 @@ pkgs.stdenv.mkDerivation {
         _SELF="$(readlink -f "$0")"
         ${lib.getExe' (outer-jail "testbed-jail" (pkgs.writeScriptBin "${name}-wrapped" gen.scriptText) [
           (outer-jail.combinators.compat-translate-flags jailFlags)
-          #(outer-jail.combinators.bind-node-script-files gen.nodeScriptFiles nodes)
+          (outer-jail.combinators.add-pkg-deps config.testbedPackages)
         ]) "testbed-jail"}
       ''} $out/bin/${name}
     ''
