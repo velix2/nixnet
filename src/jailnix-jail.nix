@@ -109,7 +109,6 @@ in
           pkgs.bash # For post setup hook
         ])
         bind-nix-store-runtime-closure
-        fake-passwd
       ];
     bubblewrapPackage = jail-exec-bin;
   };
@@ -126,7 +125,6 @@ in
               (unsafe-add-raw-args "--proc /proc")
               (unsafe-add-raw-args "--tmpfs /tmp")
               (write-text "/etc/hostname" "${jailname}\n")
-              fake-passwd
               bind-nix-store-runtime-closure
               (add-pkg-deps [
                 jail_pkg

@@ -57,14 +57,13 @@ if [ "$NET_NS" = true ]; then
 fi
 
 # Hostname, passwd, group
-# TODO: can be replaced by jailnix fakepasswd
-# mkdir -p "$NEW_ROOT/etc"
-# printf "root:x:0:0:root:/root:/bin/sh\n" > "$NEW_ROOT/etc/passwd"
-# printf "nobody:x:65534:65534:nobody:/var/empty:/bin/sh\n" >> "$NEW_ROOT/etc/passwd"
-# printf "root:x:0:\n" > "$NEW_ROOT/etc/group"
-# printf "nobody:x:65534:\n" >> "$NEW_ROOT/etc/group"
-# printf "nogroup:x:65534:\n" >> "$NEW_ROOT/etc/group"
-# printf "%s\n" "$NAME" > "$NEW_ROOT/etc/hostname"
+mkdir -p "$NEW_ROOT/etc"
+printf "root:x:0:0:root:/root:/bin/sh\n" > "$NEW_ROOT/etc/passwd"
+printf "nobody:x:65534:65534:nobody:/var/empty:/bin/sh\n" >> "$NEW_ROOT/etc/passwd"
+printf "root:x:0:\n" > "$NEW_ROOT/etc/group"
+printf "nobody:x:65534:\n" >> "$NEW_ROOT/etc/group"
+printf "nogroup:x:65534:\n" >> "$NEW_ROOT/etc/group"
+printf "%s\n" "$NAME" > "$NEW_ROOT/etc/hostname"
 
 # Bind mounts
 while IFS= read -r _entry; do
@@ -90,7 +89,7 @@ while IFS= read -r _entry; do
     mkdir -p "$NEW_ROOT$(dirname "$_dst")"
     touch "$NEW_ROOT$_dst"
   fi
-  mount --bind "$(realpath "$_src")" "$NEW_ROOT$_dst"
+  mount --bind "$_src" "$NEW_ROOT$_dst"
   if [ "$_mode" = ro ]; then
     mount -o remount,ro,bind "$NEW_ROOT$_dst"
   fi
