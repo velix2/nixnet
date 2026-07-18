@@ -177,7 +177,7 @@ done <<< "$JAIL_SYMLINKS"
 
 if [ -n "$NAME" ]; then
   # Future work: Respect --new-session flag
-  setsid env -i --chdir "$CHDIR" "${_ENV[@]}" "$@"  # named jail: init handles signals itself
+  exec env -i --chdir "$CHDIR" "${_ENV[@]}" "$@"  # named jail: init handles signals itself
 fi
 # Run the command via setsid so a terminal SIGINT can't reach it directly; we
 # forward signals to it as SIGTERM instead (a foreground job bypasses an INT trap
