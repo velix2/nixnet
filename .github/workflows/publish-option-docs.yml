@@ -3,7 +3,7 @@ name: Publish Option Docs
 on:
   push:
     branches:
-    #  - main
+      - main
 
 jobs:
   publish:
