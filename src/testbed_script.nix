@@ -175,7 +175,7 @@ let
         # ]
       )
     ) (lib.attrNames nodes)
-    ++ map (name: "jail add ${name}") config.bridges;
+    ++ map (name: lib.getExe' (inner-jail name []) "jail-add-${name}") config.bridges;
 
   # Bring loopback interfaces up
   nodeLoUpCommands = lib.mapAttrsToList (name: _: {
