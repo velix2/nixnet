@@ -107,16 +107,16 @@ _unshare_jail() {
   fi
 
   # User Namespace
-  # Special case: compare to bwrap
-  # - If user is not root, require a user namespace
-  # - If user is root, and flag is not set, do not create a user namespace
-  # - If user is root, and flag is set, create a user namespace
+  # Only create if flag is specified or if the program is not run as root
+  # If not run as root and --unshare-user is not specified, exit with error
   local user_args=()
-  if [ "$USER_NS" = true ]; then
-    user_args=("--user" "--map-root-user")
-  elif [ "$(id -u)" -ne 0 ]; then
-    echo "jail: Error: --unshare-user must be specified or program must be run as root." >&2
-    exit 1
+  if [ "$(id -u)" -ne 0 ]; then
+    if [ "$USER_NS" = true ]; then
+      user_args=("--user" "--map-root-user")
+    else
+      echo "jail: Error: --unshare-user must be specified or program must be run as root." >&2
+      exit 1
+    fi
   fi
 
   # Net Namespace - is always created
