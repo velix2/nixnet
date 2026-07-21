@@ -26,7 +26,7 @@
                     prefixLength = 24;
                   }
                 ];
-                packages = with pkgs; [ tcpreplay ];
+                packages = with pkgs; [ pcap tcpreplay ];
                 scripts.main = {
                   exec = ''
                     sleep 1
