@@ -117,6 +117,8 @@ _unshare_jail() {
       echo "jail: Error: --unshare-user must be specified or program must be run as root." >&2
       exit 1
     fi
+  else
+    USER_NS=false
   fi
 
   # Net Namespace - is always created
@@ -195,10 +197,9 @@ _jail_enter() {
   local _chdir
   _chdir="$(sed -n 's/^PWD=//p' "/run/jail/$_name/env")"
 
-  if [ -e "/run/jail/$_name/user" ]; then
-  local _user_arg=("--user=/run/jail/$_name/user")
-  else 
-    echo "jail enter: '$_name' does not have a user namespace. Enter jail as root." >&2
+  local _user_arg=()
+  if [ "$(readlink /proc/1/ns/user)" != "$(readlink "/proc/${_init_pid}/ns/user")" ]; then
+    _user_arg=("--user=/run/jail/$_name/user")
   fi
 
   # Mount Namespace is always created
