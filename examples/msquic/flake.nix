@@ -64,6 +64,7 @@
                     prefixLength = 16;
                   }
                 ];
+                packages = [ certs ];
                 scripts.main.exec = ''
                   mkdir -p /tmp/www
                   truncate -s 10G /tmp/www/10GB
