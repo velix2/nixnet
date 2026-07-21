@@ -40,7 +40,7 @@
                     prefixLength = 24;
                   }
                 ];
-                packages = [ quic-go-example ];
+                packages = [ quic-go-example certs ];
                 workDir = "client";
                 scripts.main = {
                   exec = ''
@@ -60,7 +60,7 @@
                     prefixLength = 24;
                   }
                 ];
-                packages = [ quic-go-example ];
+                packages = [ quic-go-example certs ];
                 workDir = "server";
                 scripts.main.exec = ''
                   example \
